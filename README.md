@@ -22,6 +22,8 @@ Optional features:
 - `WELCOME_CHANNEL_ID`: Channel where the welcome embed is posted.
 - `STATUS_CHANNEL_ID`: Channel to rename with the site status.
 - `SITE_STATUS_URL`: URL checked by the site status service.
+- `RULES_BANNER_URL`: Optional banner image shown at the top of the `/rules` introduction embed.
+- `STAFF_ROLE_IDS`: Comma-separated role IDs allowed to use staff-only commands such as `/rules`.
 - `STATUS_CHECK_INTERVAL_MS`: Interval between automatic status checks. Default: `60000`.
 
 ## Run The Bot

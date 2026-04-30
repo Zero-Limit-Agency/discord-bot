@@ -8,5 +8,5 @@
 - Prefer simple solutions over premature complexity.
 - The bot must still boot when optional environment variables are missing.
 - Use clear logs for startup, commands, welcome messages, and site status checks.
-- Preserve Zero Limit Agency branding and the footer `#Z0LimitForTheClutchers` where relevant.
+- Preserve the Zero Limit Agency visual identity with a premium, dark, bordeaux-first direction.
 - Do not edit the separate `z0agency` website repository from this project.

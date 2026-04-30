@@ -9,11 +9,15 @@ const config = {
   welcomeChannelId: process.env.WELCOME_CHANNEL_ID || '',
   statusChannelId: process.env.STATUS_CHANNEL_ID || '',
   siteStatusUrl: process.env.SITE_STATUS_URL || '',
+  rulesBannerUrl: process.env.RULES_BANNER_URL || '',
+  staffRoleIds: (process.env.STAFF_ROLE_IDS || '')
+    .split(',')
+    .map((roleId) => roleId.trim())
+    .filter(Boolean),
   statusCheckIntervalMs: Number.parseInt(process.env.STATUS_CHECK_INTERVAL_MS || '60000', 10),
   branding: {
     name: 'Zero Limit Agency',
-    footer: '#Z0LimitForTheClutchers',
-    color: 0x5b2134,
+    color: 0x7a1632,
   },
 };
 

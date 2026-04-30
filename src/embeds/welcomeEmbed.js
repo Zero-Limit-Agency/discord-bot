@@ -9,5 +9,4 @@ module.exports = (member) => new EmbedBuilder()
     { name: 'Start Here', value: 'Check the rules, introduce yourself, and get ready to build.' },
     { name: 'Mindset', value: 'Discipline, execution, and no limits.' },
   )
-  .setFooter({ text: config.branding.footer })
   .setTimestamp();
