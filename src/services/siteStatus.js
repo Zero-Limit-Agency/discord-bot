@@ -2,9 +2,9 @@ const config = require('../config');
 const logger = require('../utils/logger');
 
 const STATUS_CHANNEL_NAMES = {
-  online: '??·site-online',
-  maintenance: '??·site-maintenance',
-  offline: '??·site-offline',
+  online: '\u{1F7E2} \u30FBsite-online',
+  maintenance: '\u{1F7E0} \u30FBsite-maintenance',
+  offline: '\u{1F534} \u30FBsite-offline',
 };
 
 const normalizeStatus = (value) => {
