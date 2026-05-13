@@ -4,7 +4,7 @@ const Parser = require('rss-parser');
 const { PermissionFlagsBits } = require('discord.js');
 const config = require('../config');
 const logger = require('../utils/logger');
-const { createSocialPostEmbed } = require('../embeds/socialPostEmbed');
+const { createSocialPostEmbed, createSocialPostMessage } = require('../embeds/socialPostEmbed');
 
 const parser = new Parser();
 const dataDirectoryPath = path.join(process.cwd(), '.data');
@@ -89,7 +89,52 @@ const getPostImage = (item) => {
   return null;
 };
 
-const normalizePost = (feed, item) => {
+const decodeHtmlEntities = (value) => value
+  .replace(/&amp;/g, '&')
+  .replace(/&lt;/g, '<')
+  .replace(/&gt;/g, '>')
+  .replace(/&quot;/g, '"')
+  .replace(/&#39;/g, '\'')
+  .replace(/&nbsp;/g, ' ');
+
+const cleanPreviewText = (value) => {
+  if (!value || typeof value !== 'string') {
+    return null;
+  }
+
+  const normalized = decodeHtmlEntities(
+    value
+      .replace(/<br\s*\/?>/gi, '\n')
+      .replace(/<\/p>/gi, '\n')
+      .replace(/<[^>]+>/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim(),
+  );
+
+  return normalized || null;
+};
+
+const getFeedIcon = (parsedFeed) => {
+  if (parsedFeed.image && typeof parsedFeed.image.url === 'string' && parsedFeed.image.url.trim()) {
+    return parsedFeed.image.url.trim();
+  }
+
+  if (typeof parsedFeed.image === 'string' && parsedFeed.image.trim()) {
+    return parsedFeed.image.trim();
+  }
+
+  if (typeof parsedFeed.icon === 'string' && parsedFeed.icon.trim()) {
+    return parsedFeed.icon.trim();
+  }
+
+  if (typeof parsedFeed.favicon === 'string' && parsedFeed.favicon.trim()) {
+    return parsedFeed.favicon.trim();
+  }
+
+  return null;
+};
+
+const normalizePost = (feed, parsedFeed, item) => {
   const id = getPostId(item);
   const url = typeof item.link === 'string' && item.link.trim()
     ? item.link.trim()
@@ -107,9 +152,14 @@ const normalizePost = (feed, item) => {
     title: typeof item.title === 'string' && item.title.trim()
       ? item.title.trim()
       : `${feed.name} published a new post.`,
+    previewText: cleanPreviewText(item.contentSnippet)
+      || cleanPreviewText(item.content)
+      || cleanPreviewText(item.summary)
+      || cleanPreviewText(item.title),
     url,
     publishedAt: item.isoDate || item.pubDate || new Date().toISOString(),
     image: getPostImage(item),
+    sourceIcon: getFeedIcon(parsedFeed),
   };
 };
 
@@ -146,14 +196,17 @@ const rememberIds = (store, ids) => {
 
 const fetchFeedItems = async (feed) => {
   const parsedFeed = await parser.parseURL(feed.url);
-  return Array.isArray(parsedFeed.items) ? parsedFeed.items : [];
+  return {
+    parsedFeed,
+    items: Array.isArray(parsedFeed.items) ? parsedFeed.items : [],
+  };
 };
 
 const processFeed = async (feed, channel, store, isFirstRun) => {
   try {
-    const items = await fetchFeedItems(feed);
+    const { parsedFeed, items } = await fetchFeedItems(feed);
     const posts = items
-      .map((item) => normalizePost(feed, item))
+      .map((item) => normalizePost(feed, parsedFeed, item))
       .filter(Boolean);
 
     if (!posts.length) {
@@ -174,7 +227,7 @@ const processFeed = async (feed, channel, store, isFirstRun) => {
       return;
     }
 
-    if (isFirstRun) {
+    if (isFirstRun && store.postedIds.length === 0) {
       const bootstrapIds = posts
         .slice(0, FEED_BOOTSTRAP_LIMIT)
         .map((post) => post.id);
@@ -194,6 +247,7 @@ const processFeed = async (feed, channel, store, isFirstRun) => {
 
     for (const post of postsToSend) {
       await channel.send({
+        content: createSocialPostMessage(post),
         embeds: [createSocialPostEmbed(post)],
       });
       rememberIds(store, [post.id]);
@@ -235,9 +289,10 @@ const runSocialCheck = async (client, isFirstRun = false) => {
   }
 
   const store = readStore();
+  const shouldBootstrap = isFirstRun && store.postedIds.length === 0;
 
   for (const feed of config.socialFeeds) {
-    await processFeed(feed, channel, store, isFirstRun);
+    await processFeed(feed, channel, store, shouldBootstrap);
   }
 };
 

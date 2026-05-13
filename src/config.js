@@ -35,6 +35,8 @@ const config = {
   clientId: process.env.CLIENT_ID || '',
   guildId: process.env.GUILD_ID || '',
   welcomeChannelId: process.env.WELCOME_CHANNEL_ID || '',
+  welcomeBannerUrl: process.env.WELCOME_BANNER_URL || '',
+  welcomeLogoUrl: process.env.WELCOME_LOGO_URL || '',
   statusChannelId: process.env.STATUS_CHANNEL_ID || '',
   socialsChannelId: process.env.SOCIALS_CHANNEL_ID || '',
   siteStatusUrl: process.env.SITE_STATUS_URL || '',
