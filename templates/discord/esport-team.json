@@ -1,0 +1,119 @@
+{
+  "name": "Esport Team",
+  "description": "A clean Discord setup for an esport team with staff, roster, media, support and onboarding structure.",
+  "roles": [
+    {
+      "id": "founder",
+      "name": "Founder",
+      "color": "#7A1632",
+      "hoist": true,
+      "mentionable": false,
+      "permissions": ["view_channel", "manage_channels", "manage_messages", "send_messages", "read_message_history", "mention_everyone", "attach_files", "embed_links", "connect", "speak"]
+    },
+    {
+      "id": "staff",
+      "name": "Staff",
+      "color": "#A63A58",
+      "hoist": true,
+      "mentionable": false,
+      "permissions": ["view_channel", "manage_channels", "manage_messages", "send_messages", "read_message_history", "attach_files", "embed_links", "connect", "speak"]
+    },
+    {
+      "id": "player",
+      "name": "Player",
+      "color": "#D9D9D9",
+      "hoist": true,
+      "mentionable": true,
+      "permissions": ["view_channel", "send_messages", "read_message_history", "connect", "speak"]
+    },
+    {
+      "id": "community",
+      "name": "Community",
+      "color": "#808080",
+      "hoist": false,
+      "mentionable": true,
+      "permissions": ["view_channel", "send_messages", "read_message_history", "connect"]
+    }
+  ],
+  "categories": [
+    {
+      "id": "start",
+      "name": "START"
+    },
+    {
+      "id": "team",
+      "name": "TEAM"
+    },
+    {
+      "id": "media",
+      "name": "MEDIA"
+    },
+    {
+      "id": "support",
+      "name": "SUPPORT"
+    }
+  ],
+  "channels": [
+    {
+      "id": "rules",
+      "name": "rules",
+      "type": "text",
+      "categoryId": "start",
+      "topic": "Server rules and expectations.",
+      "permissions": [
+        {
+          "target": "@everyone",
+          "allow": ["view_channel", "read_message_history"],
+          "deny": ["send_messages"]
+        }
+      ]
+    },
+    {
+      "id": "welcome",
+      "name": "welcome",
+      "type": "text",
+      "categoryId": "start",
+      "topic": "Welcome and onboarding messages."
+    },
+    {
+      "id": "team-chat",
+      "name": "team-chat",
+      "type": "text",
+      "categoryId": "team",
+      "topic": "Internal roster discussion."
+    },
+    {
+      "id": "practice-room",
+      "name": "practice-room",
+      "type": "voice",
+      "categoryId": "team"
+    },
+    {
+      "id": "content-drops",
+      "name": "content-drops",
+      "type": "text",
+      "categoryId": "media",
+      "topic": "Media assets, highlights and clips."
+    },
+    {
+      "id": "tickets",
+      "name": "tickets",
+      "type": "text",
+      "categoryId": "support",
+      "topic": "Private support and requests."
+    }
+  ],
+  "welcomeEmbeds": [
+    {
+      "title": "Welcome to the Team Server",
+      "description": "Start with the rules, check the welcome channel, and use the team spaces according to their purpose.",
+      "color": "#7A1632",
+      "fields": [
+        {
+          "name": "First steps",
+          "value": "Read the rules, check the welcome information and use the right channels."
+        }
+      ]
+    }
+  ]
+}

@@ -41,6 +41,12 @@ const config = {
   socialsChannelId: process.env.SOCIALS_CHANNEL_ID || '',
   siteStatusUrl: process.env.SITE_STATUS_URL || '',
   rulesBannerUrl: process.env.RULES_BANNER_URL || '',
+  lmStudioBaseUrl: process.env.LMSTUDIO_BASE_URL || 'http://127.0.0.1:1234',
+  lmStudioModel: process.env.LMSTUDIO_MODEL || '',
+  lmStudioEnabled: String(process.env.LMSTUDIO_ENABLED || 'false').toLowerCase() === 'true',
+  lmStudioTimeoutMs: Number.parseInt(process.env.LMSTUDIO_TIMEOUT_MS || '60000', 10),
+  attachmentTextMaxBytes: Number.parseInt(process.env.ATTACHMENT_TEXT_MAX_BYTES || '1048576', 10),
+  attachmentFetchTimeoutMs: Number.parseInt(process.env.ATTACHMENT_FETCH_TIMEOUT_MS || '10000', 10),
   staffRoleIds: (process.env.STAFF_ROLE_IDS || '')
     .split(',')
     .map((roleId) => roleId.trim())
@@ -60,6 +66,18 @@ if (!Number.isFinite(config.statusCheckIntervalMs) || config.statusCheckInterval
 
 if (!Number.isFinite(config.socialCheckIntervalMs) || config.socialCheckIntervalMs <= 0) {
   config.socialCheckIntervalMs = 300000;
+}
+
+if (!Number.isFinite(config.attachmentTextMaxBytes) || config.attachmentTextMaxBytes <= 0) {
+  config.attachmentTextMaxBytes = 1048576;
+}
+
+if (!Number.isFinite(config.lmStudioTimeoutMs) || config.lmStudioTimeoutMs <= 0) {
+  config.lmStudioTimeoutMs = 60000;
+}
+
+if (!Number.isFinite(config.attachmentFetchTimeoutMs) || config.attachmentFetchTimeoutMs <= 0) {
+  config.attachmentFetchTimeoutMs = 10000;
 }
 
 module.exports = config;

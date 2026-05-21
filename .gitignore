@@ -1,3 +1,9 @@
 node_modules
 .env
 .data/
+debug/generated-payloads/
+debug/execution-plans/
+debug/simulations/
+debug/dry-runs/
+debug/build-requests/
+debug/build-generated-templates/
