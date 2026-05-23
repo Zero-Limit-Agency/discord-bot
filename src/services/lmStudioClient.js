@@ -1,15 +1,15 @@
 const config = require('../config');
 const logger = require('../utils/logger');
 
-const previewText = (value, limit = 120) => {
-  if (!value) {
-    return '';
-  }
+const getRequestDurationMs = (startedAt) => Date.now() - startedAt;
 
-  return value.length > limit ? `${value.slice(0, limit)}...` : value;
+const extractContentFromResponse = (payload) => {
+  const content = payload?.choices?.[0]?.message?.content;
+  return typeof content === 'string' ? content : '';
 };
 
 const callLmStudio = async (requestPayload) => {
+  const startedAt = Date.now();
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), config.lmStudioTimeoutMs);
 
@@ -17,55 +17,70 @@ const callLmStudio = async (requestPayload) => {
     const response = await fetch(`${config.lmStudioBaseUrl}/v1/chat/completions`, {
       method: 'POST',
       headers: {
-        'content-type': 'application/json',
+        'Content-Type': 'application/json',
       },
       body: JSON.stringify(requestPayload),
       signal: controller.signal,
     });
 
+    const durationMs = getRequestDurationMs(startedAt);
+
     if (!response.ok) {
       logger.warn('LM Studio request failed', {
         status: response.status,
+        durationMs,
       });
 
       return {
         ok: false,
-        code: 'LMSTUDIO_HTTP_ERROR',
+        code: 'HTTP_ERROR',
+        status: response.status,
+        durationMs,
         message: 'LM Studio returned an HTTP error.',
       };
     }
 
-    const data = await response.json().catch(() => null);
+    const payload = await response.json();
+    const content = extractContentFromResponse(payload);
 
-    if (!data || !Array.isArray(data.choices) || !data.choices[0]?.message?.content) {
-      logger.warn('LM Studio response format invalid');
+    if (!content) {
+      logger.warn('LM Studio response content missing', {
+        durationMs,
+      });
+
       return {
         ok: false,
-        code: 'LMSTUDIO_INVALID_RESPONSE',
+        code: 'INVALID_RESPONSE',
+        durationMs,
         message: 'LM Studio returned an invalid response.',
       };
     }
 
-    const content = String(data.choices[0].message.content);
-
-    logger.info('LM Studio response received', {
-      contentPreview: previewText(content),
+    logger.info('LM Studio request completed', {
+      durationMs,
     });
 
     return {
       ok: true,
       content,
-      raw: data,
+      durationMs,
     };
   } catch (error) {
+    const durationMs = getRequestDurationMs(startedAt);
+    const isTimeout = error?.name === 'AbortError';
+
     logger.warn('LM Studio request error', {
-      code: error.name || 'REQUEST_ERROR',
+      code: error?.name || 'UNKNOWN_ERROR',
+      durationMs,
     });
 
     return {
       ok: false,
-      code: error.name === 'AbortError' ? 'LMSTUDIO_TIMEOUT' : 'LMSTUDIO_NETWORK_ERROR',
-      message: 'LM Studio request failed.',
+      code: isTimeout ? 'TIMEOUT' : 'REQUEST_FAILED',
+      durationMs,
+      message: isTimeout
+        ? 'LM Studio a mis trop de temps a repondre. Reessaie avec un prompt plus court ou augmente LMSTUDIO_TIMEOUT_MS.'
+        : 'LM Studio request failed.',
     };
   } finally {
     clearTimeout(timeout);

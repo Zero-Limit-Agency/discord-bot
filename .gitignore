@@ -7,3 +7,7 @@ debug/simulations/
 debug/dry-runs/
 debug/build-requests/
 debug/build-generated-templates/
+debug/lmstudio-raw-responses/
+debug/build-normalized-templates/
+debug/build-repaired-templates/
+debug/build-reports/

@@ -2,6 +2,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const config = require('../config');
 const logger = require('../utils/logger');
+const discordTemplateSystemPrompt = require('../prompts/discordTemplateSystemPrompt');
 
 const debugDirectoryPath = path.join(process.cwd(), 'debug', 'build-requests');
 
@@ -98,14 +99,7 @@ const buildLmStudioRequest = ({ prompt, attachment, requestedBy }) => {
       messages: [
         {
           role: 'system',
-          content: [
-            'You must produce a strict Discord server template JSON.',
-            'Return JSON only.',
-            'Do not use markdown.',
-            'Respect the existing template schema used by this bot.',
-            'Include roles, categories, channels, permissions, and welcome embeds when relevant.',
-            'Do not invent dangerous or destructive data.',
-          ].join(' '),
+          content: discordTemplateSystemPrompt,
         },
         {
           role: 'user',

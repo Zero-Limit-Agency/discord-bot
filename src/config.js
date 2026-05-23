@@ -44,7 +44,7 @@ const config = {
   lmStudioBaseUrl: process.env.LMSTUDIO_BASE_URL || 'http://127.0.0.1:1234',
   lmStudioModel: process.env.LMSTUDIO_MODEL || '',
   lmStudioEnabled: String(process.env.LMSTUDIO_ENABLED || 'false').toLowerCase() === 'true',
-  lmStudioTimeoutMs: Number.parseInt(process.env.LMSTUDIO_TIMEOUT_MS || '60000', 10),
+  lmStudioTimeoutMs: Number.parseInt(process.env.LMSTUDIO_TIMEOUT_MS || '180000', 10),
   attachmentTextMaxBytes: Number.parseInt(process.env.ATTACHMENT_TEXT_MAX_BYTES || '1048576', 10),
   attachmentFetchTimeoutMs: Number.parseInt(process.env.ATTACHMENT_FETCH_TIMEOUT_MS || '10000', 10),
   staffRoleIds: (process.env.STAFF_ROLE_IDS || '')
@@ -73,7 +73,7 @@ if (!Number.isFinite(config.attachmentTextMaxBytes) || config.attachmentTextMaxB
 }
 
 if (!Number.isFinite(config.lmStudioTimeoutMs) || config.lmStudioTimeoutMs <= 0) {
-  config.lmStudioTimeoutMs = 60000;
+  config.lmStudioTimeoutMs = 180000;
 }
 
 if (!Number.isFinite(config.attachmentFetchTimeoutMs) || config.attachmentFetchTimeoutMs <= 0) {
