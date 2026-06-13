@@ -1,8 +1,9 @@
-const { SlashCommandBuilder } = require('discord.js');
+const { MessageFlags, SlashCommandBuilder } = require('discord.js');
 const { isStaffMember } = require('../utils/permissions');
 const logger = require('../utils/logger');
 const { buildDiscordPayloads } = require('../services/discordPayloadBuilder');
 const { createTemplatePayloadEmbed } = require('../embeds/templatePreviewEmbed');
+const { formatFailureMessage } = require('../utils/templateDiagnostics');
 
 module.exports = {
   data: new SlashCommandBuilder()
@@ -16,7 +17,7 @@ module.exports = {
     if (!isStaffMember(interaction.member)) {
       await interaction.reply({
         content: 'You do not have permission to use this command.',
-        ephemeral: true,
+        flags: MessageFlags.Ephemeral,
       });
       return;
     }
@@ -31,15 +32,18 @@ module.exports = {
       });
 
       await interaction.reply({
-        content: 'The template could not be loaded or converted into payloads.',
-        ephemeral: true,
+        content: formatFailureMessage('The template could not be converted into payloads.', {
+          errors: result.errors || result.buildErrors,
+          warnings: result.warnings || result.buildWarnings,
+        }),
+        flags: MessageFlags.Ephemeral,
       });
       return;
     }
 
     await interaction.reply({
       embeds: [createTemplatePayloadEmbed(result.slug, result)],
-      ephemeral: true,
+      flags: MessageFlags.Ephemeral,
     });
   },
 };

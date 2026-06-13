@@ -1,5 +1,11 @@
 const { EmbedBuilder } = require('discord.js');
 const config = require('../config');
+const {
+  countDiagnostics,
+  getPrimaryIssue,
+  inferTemplateStatus,
+  summarizeDiagnostics,
+} = require('../utils/templateDiagnostics');
 
 const asBulletList = (items, fallback, limit = 6) => {
   if (!items.length) {
@@ -15,6 +21,12 @@ const asBulletList = (items, fallback, limit = 6) => {
   return visibleItems.join('\n');
 };
 
+const getTemplateWarnings = (diagnostics = {}) => [
+  ...(diagnostics.normalizationWarnings || []),
+  ...(diagnostics.repairWarnings || []),
+  ...(diagnostics.validationWarnings || []),
+];
+
 const createTemplatePreviewEmbed = (slug, plan) => new EmbedBuilder()
   .setColor(config.branding.color)
   .setTitle('TEMPLATE PREVIEW')
@@ -25,77 +37,68 @@ const createTemplatePreviewEmbed = (slug, plan) => new EmbedBuilder()
     { name: 'Categories', value: String(plan.summary.categoryCount), inline: true },
     { name: 'Channels', value: String(plan.summary.channelCount), inline: true },
     { name: 'Welcome Embeds', value: String(plan.summary.welcomeEmbedCount), inline: true },
-    { name: 'Warnings', value: String(plan.warnings.length), inline: true },
+    { name: 'Status', value: inferTemplateStatus(plan.templateDiagnostics), inline: true },
+    { name: 'Warnings', value: String(countDiagnostics(plan.warnings)), inline: true },
   );
 
-const createTemplatePlanEmbed = (slug, plan) => new EmbedBuilder()
-  .setColor(config.branding.color)
-  .setTitle('TEMPLATE PLAN')
-  .setDescription(plan.description)
-  .addFields(
-    { name: 'Template', value: `${plan.templateName} (\`${slug}\`)`, inline: false },
-    {
-      name: 'Roles To Create',
-      value: asBulletList(
-        plan.roles.map((role) => `${role.name} (\`${role.internalId}\`)`),
-        'No roles in this template.',
-      ),
-      inline: false,
-    },
-    {
-      name: 'Categories To Create',
-      value: asBulletList(
-        plan.categories.map((category) => `${category.name} (\`${category.internalId}\`)`),
-        'No categories in this template.',
-      ),
-      inline: false,
-    },
-    {
-      name: 'Channels To Create',
-      value: asBulletList(
-        plan.channels.map((channel) => `${channel.name} [${channel.type}]`),
-        'No channels in this template.',
-      ),
-      inline: false,
-    },
-    {
-      name: 'Embeds To Post',
-      value: asBulletList(
-        plan.welcomeEmbeds.map((embed) => embed.title || `Embed ${embed.index}`),
-        'No welcome embeds in this template.',
-      ),
-      inline: false,
-    },
-    {
-      name: 'Blocking Errors',
-      value: asBulletList(plan.blockingErrors, 'None detected.'),
-      inline: false,
-    },
-    {
-      name: 'Warnings',
-      value: asBulletList(plan.warnings, 'None detected.'),
-      inline: false,
-    },
-    {
-      name: 'Discord.js Mapping',
-      value: [
-        `Valid: ${plan.mapping.isValid ? 'yes' : 'no'}`,
-        `Mapped types: ${plan.mapping.mappedChannelTypeCount}`,
-        `Mapped permissions: ${plan.mapping.mappedPermissionCount}`,
-      ].join('\n'),
-      inline: false,
-    },
-    {
-      name: 'Mapping Errors',
-      value: asBulletList(plan.mapping.errors, 'None detected.'),
-      inline: false,
-    },
-    {
-      name: 'Mapping Warnings',
-      value: asBulletList(plan.mapping.warnings, 'None detected.'),
-      inline: false,
-    },
-  );
+const createTemplatePlanEmbed = (slug, plan) => {
+  const blockingErrors = plan.blockingErrors || [];
+  const warnings = [
+    ...getTemplateWarnings(plan.templateDiagnostics),
+    ...(plan.mapping.warnings || []),
+    ...(plan.warnings || []),
+  ];
+  const totalActions = plan.summary.roleCount
+    + plan.summary.categoryCount
+    + plan.summary.channelCount
+    + plan.summary.welcomeEmbedCount;
+  const status = inferTemplateStatus(plan.templateDiagnostics, {
+    blocked: blockingErrors.length > 0 || plan.mapping.isValid === false,
+  });
+
+  return new EmbedBuilder()
+    .setColor(config.branding.color)
+    .setTitle('TEMPLATE PLAN')
+    .setDescription(plan.description)
+    .addFields(
+      { name: 'Template', value: `${plan.templateName} (\`${slug}\`)`, inline: false },
+      { name: 'Status', value: status, inline: true },
+      { name: 'Planned Actions', value: String(totalActions), inline: true },
+      { name: 'Warnings', value: String(countDiagnostics(warnings)), inline: true },
+      {
+        name: 'Plan Summary',
+        value: [
+          `Roles: ${plan.summary.roleCount}`,
+          `Categories: ${plan.summary.categoryCount}`,
+          `Channels: ${plan.summary.channelCount}`,
+          `Embeds: ${plan.summary.welcomeEmbedCount}`,
+        ].join('\n'),
+        inline: false,
+      },
+      {
+        name: 'Primary Issue',
+        value: getPrimaryIssue(blockingErrors, plan.mapping.errors, warnings) || 'None detected.',
+        inline: false,
+      },
+      {
+        name: 'Top Diagnostics',
+        value: summarizeDiagnostics(
+          [...blockingErrors, ...plan.mapping.errors, ...warnings],
+          { fallback: 'None detected.', limit: 4 },
+        ),
+        inline: false,
+      },
+      {
+        name: 'Mapping',
+        value: [
+          `Valid: ${plan.mapping.isValid ? 'yes' : 'no'}`,
+          `Types mapped: ${plan.mapping.mappedChannelTypeCount}`,
+          `Permissions mapped: ${plan.mapping.mappedPermissionCount}`,
+        ].join('\n'),
+        inline: false,
+      },
+    );
+};
 
 const createTemplateListEmbed = (templates) => new EmbedBuilder()
   .setColor(config.branding.color)
@@ -106,22 +109,63 @@ const createTemplateListEmbed = (templates) => new EmbedBuilder()
       : 'No templates are currently available.',
   );
 
-const createTemplatePayloadEmbed = (slug, result) => new EmbedBuilder()
-  .setColor(config.branding.color)
-  .setTitle('TEMPLATE PAYLOAD')
-  .setDescription(result.template.description || 'No description provided.')
-  .addFields(
-    { name: 'Template', value: `${result.template.name} (\`${slug}\`)`, inline: false },
-    { name: 'Role Payloads', value: String(result.summary.rolePayloadCount), inline: true },
-    { name: 'Category Payloads', value: String(result.summary.categoryPayloadCount), inline: true },
-    { name: 'Channel Payloads', value: String(result.summary.channelPayloadCount), inline: true },
-    { name: 'Embed Payloads', value: String(result.summary.embedPayloadCount), inline: true },
-    { name: 'Build Errors', value: String(result.buildErrors.length), inline: true },
-    { name: 'Build Warnings', value: String(result.buildWarnings.length), inline: true },
-    { name: 'Debug File', value: result.debugFilePath || 'Not written (production or blocked).', inline: false },
-    { name: 'Errors', value: asBulletList(result.buildErrors, 'None detected.'), inline: false },
-    { name: 'Warnings', value: asBulletList(result.buildWarnings, 'None detected.'), inline: false },
-  );
+const createTemplatePayloadEmbed = (slug, result) => {
+  const warnings = [
+    ...getTemplateWarnings(result.templateDiagnostics),
+    ...(result.buildWarnings || []),
+  ];
+  const status = inferTemplateStatus(result.templateDiagnostics, {
+    blocked: (result.buildErrors || []).length > 0,
+  });
+
+  return new EmbedBuilder()
+    .setColor(config.branding.color)
+    .setTitle('TEMPLATE PAYLOAD')
+    .setDescription(result.template.description || 'No description provided.')
+    .addFields(
+      { name: 'Template', value: `${result.template.name} (\`${slug}\`)`, inline: false },
+      { name: 'Status', value: status, inline: true },
+      {
+        name: 'Payloads',
+        value: String(
+          result.summary.rolePayloadCount
+          + result.summary.categoryPayloadCount
+          + result.summary.channelPayloadCount
+          + result.summary.embedPayloadCount,
+        ),
+        inline: true,
+      },
+      { name: 'Warnings', value: String(countDiagnostics(warnings)), inline: true },
+      {
+        name: 'Payload Summary',
+        value: [
+          `Roles: ${result.summary.rolePayloadCount}`,
+          `Categories: ${result.summary.categoryPayloadCount}`,
+          `Channels: ${result.summary.channelPayloadCount}`,
+          `Embeds: ${result.summary.embedPayloadCount}`,
+        ].join('\n'),
+        inline: false,
+      },
+      {
+        name: 'Primary Issue',
+        value: getPrimaryIssue(result.buildErrors, warnings) || 'None detected.',
+        inline: false,
+      },
+      {
+        name: 'Top Diagnostics',
+        value: summarizeDiagnostics(
+          [...(result.buildErrors || []), ...warnings],
+          { fallback: 'None detected.', limit: 4 },
+        ),
+        inline: false,
+      },
+      {
+        name: 'Debug File',
+        value: result.debugFilePath || 'Not written (production or blocked).',
+        inline: false,
+      },
+    );
+};
 
 const createTemplateExecutionPlanEmbed = (slug, result) => new EmbedBuilder()
   .setColor(config.branding.color)
@@ -203,29 +247,56 @@ const createTemplateSimulationEmbed = (slug, result) => new EmbedBuilder()
     },
   );
 
-const createTemplateDryRunEmbed = (slug, result) => new EmbedBuilder()
-  .setColor(config.branding.color)
-  .setTitle('TEMPLATE DRY RUN')
-  .setDescription(result.template.description || 'No description provided.')
-  .addFields(
-    { name: 'Template', value: `${result.template.name} (\`${slug}\`)`, inline: false },
-    { name: 'Final Status', value: result.dryRun.finalStatus, inline: true },
-    { name: 'Executed Steps', value: String(result.dryRun.summary.totalSteps), inline: true },
-    { name: 'Phases', value: String(result.dryRun.summary.phaseCount), inline: true },
-    { name: 'Success', value: String(result.dryRun.summary.successCount), inline: true },
-    { name: 'Blocked', value: String(result.dryRun.summary.blockedCount), inline: true },
-    { name: 'Failed', value: String(result.dryRun.summary.failedCount), inline: true },
-    {
-      name: 'Warnings',
-      value: asBulletList(result.dryRun.warnings, 'None detected.'),
-      inline: false,
-    },
-    {
-      name: 'Debug File',
-      value: result.debugFilePath || 'Not written (production mode).',
-      inline: false,
-    },
-  );
+const createTemplateDryRunEmbed = (slug, result) => {
+  const warnings = [
+    ...getTemplateWarnings(result.templateDiagnostics),
+    ...(result.plan?.warnings || []),
+    ...(result.dryRun?.warnings || []),
+  ];
+  const status = inferTemplateStatus(result.templateDiagnostics, {
+    blocked: result.dryRun.finalStatus !== 'success',
+    failed: result.dryRun.summary.failedCount > 0,
+  });
+
+  return new EmbedBuilder()
+    .setColor(config.branding.color)
+    .setTitle('TEMPLATE DRY RUN')
+    .setDescription(result.template.description || 'No description provided.')
+    .addFields(
+      { name: 'Template', value: `${result.template.name} (\`${slug}\`)`, inline: false },
+      { name: 'Status', value: status, inline: true },
+      { name: 'Run Result', value: result.dryRun.finalStatus, inline: true },
+      { name: 'Warnings', value: String(countDiagnostics(warnings)), inline: true },
+      {
+        name: 'Run Summary',
+        value: [
+          `Steps: ${result.dryRun.summary.totalSteps}`,
+          `Success: ${result.dryRun.summary.successCount}`,
+          `Blocked: ${result.dryRun.summary.blockedCount}`,
+          `Failed: ${result.dryRun.summary.failedCount}`,
+        ].join('\n'),
+        inline: false,
+      },
+      {
+        name: 'Primary Issue',
+        value: getPrimaryIssue(result.dryRun.blockingErrors, warnings) || 'None detected.',
+        inline: false,
+      },
+      {
+        name: 'Top Diagnostics',
+        value: summarizeDiagnostics(
+          [...(result.dryRun.blockingErrors || []), ...warnings],
+          { fallback: 'None detected.', limit: 4 },
+        ),
+        inline: false,
+      },
+      {
+        name: 'Debug File',
+        value: result.debugFilePath || 'Not written (production mode).',
+        inline: false,
+      },
+    );
+};
 
 module.exports = {
   createTemplatePreviewEmbed,

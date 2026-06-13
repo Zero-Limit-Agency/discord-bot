@@ -233,6 +233,11 @@ const buildDiscordPayloadsFromLoaded = (loaded) => {
     ok: true,
     slug: loaded.slug,
     template: loaded.template,
+    templateDiagnostics: {
+      normalizationWarnings: loaded.normalizationWarnings || [],
+      repairWarnings: loaded.repairWarnings || [],
+      validationWarnings: loaded.validation.warnings,
+    },
     payloads,
     summary: {
       rolePayloadCount: rolePayloads.length,

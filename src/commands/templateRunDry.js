@@ -1,8 +1,9 @@
-const { SlashCommandBuilder } = require('discord.js');
+const { MessageFlags, SlashCommandBuilder } = require('discord.js');
 const { isStaffMember } = require('../utils/permissions');
 const logger = require('../utils/logger');
 const { executeDryRun } = require('../services/discordTemplateRunner');
 const { createTemplateDryRunEmbed } = require('../embeds/templatePreviewEmbed');
+const { formatFailureMessage } = require('../utils/templateDiagnostics');
 
 module.exports = {
   data: new SlashCommandBuilder()
@@ -16,7 +17,7 @@ module.exports = {
     if (!isStaffMember(interaction.member)) {
       await interaction.reply({
         content: 'You do not have permission to use this command.',
-        ephemeral: true,
+        flags: MessageFlags.Ephemeral,
       });
       return;
     }
@@ -31,15 +32,18 @@ module.exports = {
       });
 
       await interaction.reply({
-        content: 'The template could not be executed in dry-run mode.',
-        ephemeral: true,
+        content: formatFailureMessage('The template could not be executed in dry-run mode.', {
+          errors: result.errors,
+          warnings: result.warnings,
+        }),
+        flags: MessageFlags.Ephemeral,
       });
       return;
     }
 
     await interaction.reply({
       embeds: [createTemplateDryRunEmbed(result.slug, result)],
-      ephemeral: true,
+      flags: MessageFlags.Ephemeral,
     });
   },
 };

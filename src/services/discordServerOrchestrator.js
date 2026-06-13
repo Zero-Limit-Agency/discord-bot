@@ -185,6 +185,11 @@ const buildExecutionPlanFromPayloadResult = (payloadResult) => {
     templateName: template.name,
     slug: payloadResult.slug,
     status,
+    templateDiagnostics: payloadResult.templateDiagnostics || {
+      normalizationWarnings: [],
+      repairWarnings: [],
+      validationWarnings: [],
+    },
     summary: {
       ...summary,
       totalSteps,
@@ -215,6 +220,7 @@ const buildExecutionPlanFromPayloadResult = (payloadResult) => {
     slug: payloadResult.slug,
     template,
     payloads,
+    templateDiagnostics: payloadResult.templateDiagnostics,
     plan,
     debugFilePath,
   };

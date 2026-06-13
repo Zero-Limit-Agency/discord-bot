@@ -9,6 +9,13 @@ const { isStaffMember } = require('../utils/permissions');
 const logger = require('../utils/logger');
 const { executeDryRun, executeLiveRun } = require('../services/discordTemplateRunner');
 const { createLiveDiscordExecutionAdapter } = require('../services/executionAdapters/discordLiveExecutionAdapter');
+const {
+  countDiagnostics,
+  formatFailureMessage,
+  inferTemplateStatus,
+  summarizeDiagnostics,
+  uniqueDiagnostics,
+} = require('../utils/templateDiagnostics');
 
 const requiredPermissions = [
   PermissionsBitField.Flags.ManageRoles,
@@ -25,33 +32,55 @@ const formatMissingPermissions = (memberPermissions) => requiredPermissions
   .filter((permission) => !memberPermissions.has(permission))
   .map((permission) => PermissionsBitField.Flags[Object.keys(PermissionsBitField.Flags).find((key) => PermissionsBitField.Flags[key] === permission)] || String(permission));
 
-const formatExecutionIssue = (result, fallbackMessage) => {
-  const issue = result?.errors?.[0] || result?.message || result?.code;
-  return issue ? `${fallbackMessage}\n${issue}` : fallbackMessage;
-};
+const createTemplateCreateEmbed = (slug, result, diagnostics = {}) => {
+  const warnings = uniqueDiagnostics([
+    ...(diagnostics.normalizationWarnings || []),
+    ...(diagnostics.repairWarnings || []),
+    ...(diagnostics.validationWarnings || []),
+    ...(result.plan?.warnings || []),
+    ...(result.liveRun?.warnings || []),
+  ]);
 
-const createTemplateCreateEmbed = (slug, result, warnings = []) => new EmbedBuilder()
-  .setColor(config.branding.color)
-  .setTitle('TEMPLATE CREATE RESULT')
-  .setDescription(`Live template creation finished for \`${slug}\`.`)
-  .addFields(
-    { name: 'Template', value: result.template.name, inline: false },
-    { name: 'Final Status', value: result.liveRun.finalStatus, inline: true },
-    { name: 'Created', value: String(result.liveRun.summary.successCount), inline: true },
-    { name: 'Failed', value: String(result.liveRun.summary.failedCount), inline: true },
-    { name: 'Blocked', value: String(result.liveRun.summary.blockedCount), inline: true },
-    { name: 'Warnings', value: String(warnings.length + result.liveRun.warnings.length), inline: true },
-    {
-      name: 'Warnings Summary',
-      value: [...warnings, ...result.liveRun.warnings].slice(0, 8).join('\n') || 'None detected.',
-      inline: false,
-    },
-    {
-      name: 'Debug File',
-      value: result.debugFilePath || 'Not written (production mode).',
-      inline: false,
-    },
-  );
+  return new EmbedBuilder()
+    .setColor(config.branding.color)
+    .setTitle('TEMPLATE CREATE RESULT')
+    .setDescription(`Live template creation finished for \`${slug}\`.`)
+    .addFields(
+      { name: 'Template', value: result.template.name, inline: false },
+      {
+        name: 'Status',
+        value: inferTemplateStatus(diagnostics, {
+          blocked: result.liveRun.finalStatus !== 'success',
+          failed: result.liveRun.summary.failedCount > 0,
+        }),
+        inline: true,
+      },
+      { name: 'Run Result', value: result.liveRun.finalStatus, inline: true },
+      { name: 'Warnings', value: String(countDiagnostics(warnings)), inline: true },
+      {
+        name: 'Run Summary',
+        value: [
+          `Created: ${result.liveRun.summary.successCount}`,
+          `Blocked: ${result.liveRun.summary.blockedCount}`,
+          `Failed: ${result.liveRun.summary.failedCount}`,
+        ].join('\n'),
+        inline: false,
+      },
+      {
+        name: 'Top Diagnostics',
+        value: summarizeDiagnostics(warnings, {
+          fallback: 'None detected.',
+          limit: 4,
+        }),
+        inline: false,
+      },
+      {
+        name: 'Debug File',
+        value: result.debugFilePath || 'Not written (production mode).',
+        inline: false,
+      },
+    );
+};
 
 module.exports = {
   data: new SlashCommandBuilder()
@@ -125,10 +154,10 @@ module.exports = {
         });
 
         await interaction.editReply({
-          content: formatExecutionIssue(
-            dryRunResult,
-            'The template could not pass the required dry-run checks.',
-          ),
+          content: formatFailureMessage('The template could not pass the required dry-run checks.', {
+            errors: dryRunResult.errors,
+            warnings: dryRunResult.warnings,
+          }),
         });
         return;
       }
@@ -150,16 +179,16 @@ module.exports = {
         });
 
         await interaction.editReply({
-          content: formatExecutionIssue(
-            liveRunResult,
-            'The template could not be executed live.',
-          ),
+          content: formatFailureMessage('The template could not be executed live.', {
+            errors: liveRunResult.errors,
+            warnings: liveRunResult.warnings,
+          }),
         });
         return;
       }
 
       await interaction.editReply({
-        embeds: [createTemplateCreateEmbed(templateSlug, liveRunResult)],
+        embeds: [createTemplateCreateEmbed(templateSlug, liveRunResult, liveRunResult.templateDiagnostics || {})],
       });
     } catch (error) {
       logger.error('Template create command failed', {

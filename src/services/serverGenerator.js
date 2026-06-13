@@ -45,6 +45,11 @@ const buildServerPlan = (slug) => {
   const plan = {
     templateName: template.name,
     description: template.description || 'No description provided.',
+    templateDiagnostics: {
+      normalizationWarnings: result.normalizationWarnings || [],
+      repairWarnings: result.repairWarnings || [],
+      validationWarnings: validation.warnings,
+    },
     roles,
     categories,
     channels,

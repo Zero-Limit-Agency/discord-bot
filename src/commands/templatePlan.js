@@ -1,8 +1,9 @@
-const { SlashCommandBuilder } = require('discord.js');
+const { MessageFlags, SlashCommandBuilder } = require('discord.js');
 const { isStaffMember } = require('../utils/permissions');
 const logger = require('../utils/logger');
 const { buildServerPlan } = require('../services/serverGenerator');
 const { createTemplatePlanEmbed } = require('../embeds/templatePreviewEmbed');
+const { formatFailureMessage } = require('../utils/templateDiagnostics');
 
 module.exports = {
   data: new SlashCommandBuilder()
@@ -16,7 +17,7 @@ module.exports = {
     if (!isStaffMember(interaction.member)) {
       await interaction.reply({
         content: 'You do not have permission to use this command.',
-        ephemeral: true,
+        flags: MessageFlags.Ephemeral,
       });
       return;
     }
@@ -31,15 +32,18 @@ module.exports = {
       });
 
       await interaction.reply({
-        content: 'The template could not be loaded or is invalid.',
-        ephemeral: true,
+        content: formatFailureMessage('The template could not be loaded or planned.', {
+          errors: result.errors,
+          warnings: result.warnings,
+        }),
+        flags: MessageFlags.Ephemeral,
       });
       return;
     }
 
     await interaction.reply({
       embeds: [createTemplatePlanEmbed(result.slug, result.plan)],
-      ephemeral: true,
+      flags: MessageFlags.Ephemeral,
     });
   },
 };

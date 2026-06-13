@@ -255,6 +255,7 @@ const executeTemplateRunFromPlan = async (executionPlanResult, adapter, options 
     ok: true,
     slug: executionPlanResult.slug,
     template: executionPlanResult.template,
+    templateDiagnostics: executionPlanResult.templateDiagnostics || executionPlanResult.plan.templateDiagnostics,
     plan: executionPlanResult.plan,
     run: runLog,
     debugFilePath,
