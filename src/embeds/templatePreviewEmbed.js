@@ -33,12 +33,43 @@ const createTemplatePreviewEmbed = (slug, plan) => new EmbedBuilder()
   .setDescription(plan.description)
   .addFields(
     { name: 'Template', value: `${plan.templateName} (\`${slug}\`)`, inline: false },
-    { name: 'Roles', value: String(plan.summary.roleCount), inline: true },
-    { name: 'Categories', value: String(plan.summary.categoryCount), inline: true },
-    { name: 'Channels', value: String(plan.summary.channelCount), inline: true },
-    { name: 'Welcome Embeds', value: String(plan.summary.welcomeEmbedCount), inline: true },
     { name: 'Status', value: inferTemplateStatus(plan.templateDiagnostics), inline: true },
-    { name: 'Warnings', value: String(countDiagnostics(plan.warnings)), inline: true },
+    {
+      name: 'Warnings',
+      value: String(countDiagnostics([
+        ...getTemplateWarnings(plan.templateDiagnostics),
+        ...(plan.mapping?.warnings || []),
+      ])),
+      inline: true,
+    },
+    {
+      name: 'Summary',
+      value: [
+        `Roles: ${plan.summary.roleCount}`,
+        `Categories: ${plan.summary.categoryCount}`,
+        `Channels: ${plan.summary.channelCount}`,
+        `Embeds: ${plan.summary.welcomeEmbedCount}`,
+      ].join('\n'),
+      inline: false,
+    },
+    {
+      name: 'Primary Issue',
+      value: getPrimaryIssue(plan.blockingErrors, plan.mapping?.errors, getTemplateWarnings(plan.templateDiagnostics), plan.mapping?.warnings) || 'None detected.',
+      inline: false,
+    },
+    {
+      name: 'Top Diagnostics',
+      value: summarizeDiagnostics(
+        [
+          ...(plan.blockingErrors || []),
+          ...(plan.mapping?.errors || []),
+          ...getTemplateWarnings(plan.templateDiagnostics),
+          ...(plan.mapping?.warnings || []),
+        ],
+        { fallback: 'None detected.', limit: 4 },
+      ),
+      inline: false,
+    },
   );
 
 const createTemplatePlanEmbed = (slug, plan) => {

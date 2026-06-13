@@ -1,4 +1,4 @@
-const { SlashCommandBuilder } = require('discord.js');
+const { MessageFlags, SlashCommandBuilder } = require('discord.js');
 const { isStaffMember } = require('../utils/permissions');
 const logger = require('../utils/logger');
 const { listTemplates } = require('../services/discordTemplateService');
@@ -7,6 +7,7 @@ const {
   createTemplatePreviewEmbed,
   createTemplateListEmbed,
 } = require('../embeds/templatePreviewEmbed');
+const { formatFailureMessage } = require('../utils/templateDiagnostics');
 
 module.exports = {
   data: new SlashCommandBuilder()
@@ -20,7 +21,7 @@ module.exports = {
     if (!isStaffMember(interaction.member)) {
       await interaction.reply({
         content: 'You do not have permission to use this command.',
-        ephemeral: true,
+        flags: MessageFlags.Ephemeral,
       });
       return;
     }
@@ -32,7 +33,7 @@ module.exports = {
 
       await interaction.reply({
         embeds: [createTemplateListEmbed(templates)],
-        ephemeral: true,
+        flags: MessageFlags.Ephemeral,
       });
       return;
     }
@@ -46,15 +47,18 @@ module.exports = {
       });
 
       await interaction.reply({
-        content: 'The template could not be loaded or is invalid.',
-        ephemeral: true,
+        content: formatFailureMessage('The template could not be previewed.', {
+          errors: result.errors,
+          warnings: result.warnings,
+        }),
+        flags: MessageFlags.Ephemeral,
       });
       return;
     }
 
     await interaction.reply({
       embeds: [createTemplatePreviewEmbed(result.slug, result.plan)],
-      ephemeral: true,
+      flags: MessageFlags.Ephemeral,
     });
   },
 };

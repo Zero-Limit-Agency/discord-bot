@@ -23,6 +23,13 @@ const {
   createTemplateExecutionPlanEmbed,
   createTemplateDryRunEmbed,
 } = require('../embeds/templatePreviewEmbed');
+const {
+  countDiagnostics,
+  getPrimaryIssue,
+  inferTemplateStatus,
+  summarizeDiagnostics,
+  uniqueDiagnostics,
+} = require('../utils/templateDiagnostics');
 const fs = require('node:fs');
 const path = require('node:path');
 
@@ -539,6 +546,17 @@ const summarizeImportantAgentWarnings = (agentRuns) => {
   return collected.length ? collected.slice(0, 6).join('\n') : 'None';
 };
 
+const resolveBuildDebugFolder = ({ pipelineMeta, generatedTemplate, buildReport }) => {
+  const candidatePath = pipelineMeta?.debugFolderPath
+    || buildReport?.debugReportFilePath
+    || generatedTemplate?.debugFilePath
+    || generatedTemplate?.repairedDebugFilePath
+    || generatedTemplate?.normalizedDebugFilePath
+    || null;
+
+  return candidatePath ? path.dirname(candidatePath) : null;
+};
+
 const createMultiAgentFailureEmbed = ({ failedAgent, pipelineMeta, lmStudio }) => {
   const completedAgents = (pipelineMeta?.agentRuns || [])
     .filter((agentRun) => agentRun.success)
@@ -594,10 +612,47 @@ const createBuildEmbed = (result, report = null) => {
   const draftSaved = generatedTemplate?.saved ? 'Yes' : 'No';
   const draftPath = generatedTemplate?.savedPath || 'Not saved';
   const payloadSummary = report?.payloadResult?.summary;
-  const buildErrorValue = validationErrors.length
-    ? validationErrors.slice(0, 6).join('\n')
-    : safeString(lmStudio.errorMessage, 'None');
   const dryRunStatus = report?.dryRunResult?.dryRun?.finalStatus || 'Not run';
+  const importantWarnings = uniqueDiagnostics([
+    ...attachmentWarnings,
+    ...normalizationWarnings,
+    ...repairWarnings,
+    ...validationWarnings,
+    ...(report?.executionPlanResult?.plan?.warnings || []),
+    ...(report?.dryRunResult?.dryRun?.warnings || []),
+  ]);
+  const importantErrors = uniqueDiagnostics([
+    ...validationErrors,
+    ...(report?.executionPlanResult?.plan?.blockingErrors || []),
+    ...(report?.dryRunResult?.dryRun?.blockingErrors || []),
+    ...(lmStudio.errorMessage ? [lmStudio.errorMessage] : []),
+  ]);
+  const templateStatus = generatedTemplate
+    ? inferTemplateStatus({
+      normalizationWarnings,
+      repairWarnings,
+    }, {
+      blocked: generatedTemplate.valid === false || dryRunStatus === 'blocked',
+      failed: dryRunStatus === 'partial' || dryRunStatus === 'failed',
+    })
+    : (lmStudio.called && !lmStudio.success ? 'failed' : 'valid');
+  const totalActions = templateSummary
+    ? safeCount(templateSummary.roles)
+      + safeCount(templateSummary.categories)
+      + safeCount(templateSummary.channels)
+      + safeCount(templateSummary.embeds)
+    : 0;
+  const totalPayloads = payloadSummary
+    ? safeCount(payloadSummary.rolePayloadCount)
+      + safeCount(payloadSummary.categoryPayloadCount)
+      + safeCount(payloadSummary.channelPayloadCount)
+      + safeCount(payloadSummary.embedPayloadCount)
+    : 0;
+  const debugFolder = resolveBuildDebugFolder({
+    pipelineMeta,
+    generatedTemplate,
+    buildReport: report,
+  });
 
   return new EmbedBuilder()
     .setColor(config.branding.color)
@@ -621,46 +676,55 @@ const createBuildEmbed = (result, report = null) => {
       safeEmbedField('AI Skills Mode', skillsMeta?.skillsMode || 'N/A', true),
       safeEmbedField('AI Skills Loaded', safeNumberLabel(skillsMeta?.skillsLoaded, '0'), true),
       safeEmbedField('Pipeline Mode', pipelineMeta?.mode || 'single', true),
+      safeEmbedField('Template Status', templateStatus, true),
+      safeEmbedField('Warnings', String(countDiagnostics(importantWarnings)), true),
       safeEmbedField('Agent Statuses', summarizeAgentStatuses(pipelineMeta?.agentRuns), false),
-      safeEmbedField('Agent Durations', summarizeAgentDurations(pipelineMeta?.agentRuns), false),
-      safeEmbedField('Agent Timeouts', summarizeAgentTimeouts(pipelineMeta?.agentRuns), false),
       safeEmbedField('Agent Retries', summarizeAgentRetries(pipelineMeta?.agentRuns), false),
-      safeEmbedField('Agent Repairs', summarizeAgentRepairs(pipelineMeta?.agentRuns), false),
       safeEmbedField('JSON Extraction', lmStudio.jsonExtraction || 'Not attempted', true),
-      safeEmbedField('Normalization', generatedTemplate?.normalizationStatus || 'Not attempted', true),
-      safeEmbedField('Repair Applied', generatedTemplate?.repairStatus || 'Not attempted', true),
-      safeEmbedField('Repair Warnings Count', safeNumberLabel(repairWarnings.length, '0'), true),
       safeEmbedField('JSON Valid', generatedTemplate ? (generatedTemplate.valid ? 'Yes' : 'No') : 'Not checked', true),
       safeEmbedField('Generated Template', generatedTemplate?.name || 'Not available', true),
       safeEmbedField('Draft Saved', draftSaved, true),
       safeEmbedField('Dry Run Status', dryRunStatus || 'Not run', true),
+      safeEmbedField('Actions Planned', totalActions ? String(totalActions) : 'Not available', true),
+      safeEmbedField('Payload Count', totalPayloads ? String(totalPayloads) : 'Not available', true),
       safeEmbedField('Draft Path', draftPath || 'Not saved', false),
       safeEmbedField(
-        'Roles / Categories / Channels / Embeds',
+        'Template Summary',
         templateSummary
-          ? `${safeCount(templateSummary.roles)}/${safeCount(templateSummary.categories)}/${safeCount(templateSummary.channels)}/${safeCount(templateSummary.embeds)}`
+          ? [
+            `Roles: ${safeCount(templateSummary.roles)}`,
+            `Categories: ${safeCount(templateSummary.categories)}`,
+            `Channels: ${safeCount(templateSummary.channels)}`,
+            `Embeds: ${safeCount(templateSummary.embeds)}`,
+          ].join('\n')
           : 'Not available',
         false,
       ),
       safeEmbedField(
         'Payload Summary',
         payloadSummary
-          ? `${safeCount(payloadSummary.rolePayloadCount)}/${safeCount(payloadSummary.categoryPayloadCount)}/${safeCount(payloadSummary.channelPayloadCount)}/${safeCount(payloadSummary.embedPayloadCount)}`
+          ? [
+            `Roles: ${safeCount(payloadSummary.rolePayloadCount)}`,
+            `Categories: ${safeCount(payloadSummary.categoryPayloadCount)}`,
+            `Channels: ${safeCount(payloadSummary.channelPayloadCount)}`,
+            `Embeds: ${safeCount(payloadSummary.embedPayloadCount)}`,
+          ].join('\n')
           : 'Not available',
         false,
       ),
-      safeEmbedField('Errors', buildErrorValue || 'None', false),
-      safeEmbedField('Warnings', attachmentWarnings.length ? attachmentWarnings.join('\n') : 'None', false),
-      safeEmbedField('Normalization Warnings', normalizationWarnings.length ? normalizationWarnings.slice(0, 6).join('\n') : 'None', false),
-      safeEmbedField('Repair Warnings', repairWarnings.length ? repairWarnings.slice(0, 6).join('\n') : 'None', false),
-      safeEmbedField('Validation Warnings', validationWarnings.length ? validationWarnings.slice(0, 6).join('\n') : 'None', false),
+      safeEmbedField('Main Cause', getPrimaryIssue(importantErrors, importantWarnings) || 'None detected.', false),
+      safeEmbedField(
+        'Top Diagnostics',
+        summarizeDiagnostics(
+          [...importantErrors, ...importantWarnings],
+          { fallback: 'None detected.', limit: 4 },
+        ),
+        false,
+      ),
       safeEmbedField('Important Agent Warnings', summarizeImportantAgentWarnings(pipelineMeta?.agentRuns), false),
+      safeEmbedField('Debug Folder', debugFolder || 'Not written (production mode)', false),
       safeEmbedField('Debug Request', debugFilePath || 'Not written (production mode)', false),
       safeEmbedField('Debug Final Prompt', finalPromptDebugFilePath || 'Not written (production mode)', false),
-      safeEmbedField('Debug Raw Response', lmStudio.rawResponseDebugFilePath || 'Not written (production mode)', false),
-      safeEmbedField('Debug Normalized Template', generatedTemplate?.normalizedDebugFilePath || 'Not written (production mode)', false),
-      safeEmbedField('Debug Repaired Template', generatedTemplate?.repairedDebugFilePath || 'Not written (production mode)', false),
-      safeEmbedField('Debug Generated Template', generatedTemplate?.debugFilePath || 'Not written (production mode)', false),
       safeEmbedField('Debug Agent Folder', pipelineMeta?.debugFolderPath || 'Not written (production mode)', false),
     );
 };
