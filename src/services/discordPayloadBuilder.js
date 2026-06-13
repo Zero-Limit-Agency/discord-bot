@@ -180,13 +180,7 @@ const writeDebugPayloads = (slug, payloads) => {
   return filePath;
 };
 
-const buildDiscordPayloads = (slug) => {
-  const loaded = loadTemplate(slug);
-
-  if (!loaded.ok) {
-    return loaded;
-  }
-
+const buildDiscordPayloadsFromLoaded = (loaded) => {
   const mapping = analyzeTemplateMapping(loaded.template);
 
   if (!mapping.isValid) {
@@ -205,8 +199,6 @@ const buildDiscordPayloads = (slug) => {
   }
 
   const warnings = [
-    ...(loaded.normalizationWarnings || []),
-    ...(loaded.repairWarnings || []),
     ...loaded.validation.warnings,
     ...mapping.warnings,
   ];
@@ -255,6 +247,17 @@ const buildDiscordPayloads = (slug) => {
   };
 };
 
+const buildDiscordPayloads = (slug) => {
+  const loaded = loadTemplate(slug);
+
+  if (!loaded.ok) {
+    return loaded;
+  }
+
+  return buildDiscordPayloadsFromLoaded(loaded);
+};
+
 module.exports = {
   buildDiscordPayloads,
+  buildDiscordPayloadsFromLoaded,
 };

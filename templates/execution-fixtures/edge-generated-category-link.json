@@ -1,0 +1,34 @@
+{
+  "__expected": {
+    "status": "success",
+    "repaired": true,
+    "warningIncludes": [
+      "Generated missing category key",
+      "Generated missing channel key",
+      "resolved category reference"
+    ],
+    "channelCategoryRefs": {
+      "chat": "general"
+    }
+  },
+  "name": "Generated Category Link",
+  "description": "Generated ids should still allow channels to attach cleanly.",
+  "roles": [],
+  "categories": [
+    {
+      "name": "General"
+    }
+  ],
+  "channels": [
+    {
+      "name": "chat",
+      "type": "text",
+      "category": "General"
+    }
+  ],
+  "welcomeEmbeds": [
+    {
+      "title": "Hello"
+    }
+  ]
+}

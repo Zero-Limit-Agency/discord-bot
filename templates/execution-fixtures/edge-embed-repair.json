@@ -1,0 +1,41 @@
+{
+  "__expected": {
+    "status": "success",
+    "repaired": true,
+    "warningIncludes": [
+      "moved text into description",
+      "was removed because it has no usable title or description",
+      "was truncated to 256 characters"
+    ],
+    "embedCount": 3
+  },
+  "name": "Embed Repair Server",
+  "description": "Embeds should be repaired or removed safely.",
+  "roles": [],
+  "categories": [
+    {
+      "id": "start",
+      "name": "Start"
+    }
+  ],
+  "channels": [
+    {
+      "id": "rules",
+      "name": "rules",
+      "type": "text",
+      "categoryId": "start"
+    }
+  ],
+  "welcomeEmbeds": [
+    "Welcome aboard",
+    {
+      "text": "Read the rules carefully."
+    },
+    {
+      "title": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+    },
+    {
+      "foo": "bar"
+    }
+  ]
+}

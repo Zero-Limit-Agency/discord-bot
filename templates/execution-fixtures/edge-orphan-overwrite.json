@@ -1,0 +1,46 @@
+{
+  "__expected": {
+    "status": "success",
+    "repaired": false,
+    "warningIncludes": [
+      "references unresolved role"
+    ],
+    "overwriteStepCount": 0
+  },
+  "name": "Orphan Overwrite Server",
+  "description": "Overwrite should be dropped at execution planning time.",
+  "roles": [
+    {
+      "id": "staff",
+      "name": "Staff"
+    }
+  ],
+  "categories": [
+    {
+      "id": "hub",
+      "name": "Hub"
+    }
+  ],
+  "channels": [
+    {
+      "id": "chat",
+      "name": "chat",
+      "type": "text",
+      "categoryId": "hub",
+      "permissions": [
+        {
+          "target": "Ghost Role",
+          "allow": [
+            "view_channel"
+          ],
+          "deny": []
+        }
+      ]
+    }
+  ],
+  "welcomeEmbeds": [
+    {
+      "title": "Hello"
+    }
+  ]
+}

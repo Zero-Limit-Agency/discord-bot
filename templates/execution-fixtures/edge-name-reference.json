@@ -1,0 +1,57 @@
+{
+  "__expected": {
+    "status": "success",
+    "repaired": true,
+    "warningIncludes": [
+      "resolved category reference",
+      "resolved role reference",
+      "onboardingChannelId resolved channel reference"
+    ],
+    "channelCategoryRefs": {
+      "rules-hub": "welcome-zone"
+    },
+    "overwriteRoleRefs": {
+      "rules-hub": [
+        "staff"
+      ]
+    },
+    "onboardingTarget": "rules-hub"
+  },
+  "name": "Name Reference Repair",
+  "description": "Friendly names should resolve to internal ids when possible.",
+  "roles": [
+    {
+      "id": "staff",
+      "name": "Staff Team"
+    }
+  ],
+  "categories": [
+    {
+      "id": "welcome-zone",
+      "name": "Welcome Zone"
+    }
+  ],
+  "channels": [
+    {
+      "id": "rules-hub",
+      "name": "rules",
+      "type": "text",
+      "category": "Welcome Zone",
+      "permissions": [
+        {
+          "target": "Staff Team",
+          "allow": [
+            "view_channel"
+          ],
+          "deny": []
+        }
+      ]
+    }
+  ],
+  "onboardingChannelId": "rules",
+  "welcomeEmbeds": [
+    {
+      "title": "Welcome"
+    }
+  ]
+}

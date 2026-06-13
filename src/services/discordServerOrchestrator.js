@@ -66,13 +66,7 @@ const resolveOnboardingChannelRef = (template, payloads, warnings, errors) => {
   return null;
 };
 
-const buildExecutionPlan = (slug) => {
-  const payloadResult = buildDiscordPayloads(slug);
-
-  if (!payloadResult.ok) {
-    return payloadResult;
-  }
-
+const buildExecutionPlanFromPayloadResult = (payloadResult) => {
   const { payloads, template, summary, buildErrors, buildWarnings } = payloadResult;
   const placeholders = createPlaceholderMaps(payloads);
   const errors = [...buildErrors];
@@ -226,6 +220,17 @@ const buildExecutionPlan = (slug) => {
   };
 };
 
+const buildExecutionPlan = (slug) => {
+  const payloadResult = buildDiscordPayloads(slug);
+
+  if (!payloadResult.ok) {
+    return payloadResult;
+  }
+
+  return buildExecutionPlanFromPayloadResult(payloadResult);
+};
+
 module.exports = {
   buildExecutionPlan,
+  buildExecutionPlanFromPayloadResult,
 };

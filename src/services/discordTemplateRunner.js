@@ -133,13 +133,7 @@ const createRunLog = (executionPlanResult, phaseLogs, runtimeRefs) => {
   };
 };
 
-const executeTemplateRun = async (slug, adapter, options = {}) => {
-  const executionPlanResult = buildExecutionPlan(slug);
-
-  if (!executionPlanResult.ok) {
-    return executionPlanResult;
-  }
-
+const executeTemplateRunFromPlan = async (executionPlanResult, adapter, options = {}) => {
   if (executionPlanResult.plan.status !== 'ready') {
     logger.warn('Discord template run blocked before execution', {
       template: executionPlanResult.slug,
@@ -267,6 +261,16 @@ const executeTemplateRun = async (slug, adapter, options = {}) => {
   };
 };
 
+const executeTemplateRun = async (slug, adapter, options = {}) => {
+  const executionPlanResult = buildExecutionPlan(slug);
+
+  if (!executionPlanResult.ok) {
+    return executionPlanResult;
+  }
+
+  return executeTemplateRunFromPlan(executionPlanResult, adapter, options);
+};
+
 const executeDryRun = async (slug, adapter = mockAdapter) => {
   const result = await executeTemplateRun(slug, adapter, {
     mode: 'dry-run',
@@ -310,4 +314,5 @@ const executeLiveRun = async (slug, adapter) => {
 module.exports = {
   executeDryRun,
   executeLiveRun,
+  executeTemplateRunFromPlan,
 };

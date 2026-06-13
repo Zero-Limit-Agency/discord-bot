@@ -1,0 +1,29 @@
+{
+  "__expected": {
+    "status": "success",
+    "repaired": false,
+    "onboardingTarget": "announcements"
+  },
+  "name": "Onboarding Fallback",
+  "description": "Embeds should use the first text-capable channel automatically.",
+  "roles": [],
+  "categories": [
+    {
+      "id": "updates",
+      "name": "Updates"
+    }
+  ],
+  "channels": [
+    {
+      "id": "announcements",
+      "name": "announcements",
+      "type": "announcement",
+      "categoryId": "updates"
+    }
+  ],
+  "welcomeEmbeds": [
+    {
+      "title": "Start Here"
+    }
+  ]
+}

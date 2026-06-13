@@ -30,10 +30,7 @@ const normalizeRole = (role, index, warnings) => {
     normalizedRole.id = normalizedId;
   }
 
-  if (!normalizedRole.key && normalizedId) {
-    normalizedRole.key = normalizedId;
-    warnings.push(`roles[${index}] used id as key.`);
-  } else if (normalizedKey) {
+  if (normalizedKey) {
     normalizedRole.key = normalizedKey;
   }
 
@@ -62,10 +59,7 @@ const normalizeCategory = (category, index, warnings) => {
     normalizedCategory.id = normalizedId;
   }
 
-  if (!normalizedCategory.key && normalizedId) {
-    normalizedCategory.key = normalizedId;
-    warnings.push(`categories[${index}] used id as key.`);
-  } else if (normalizedKey) {
+  if (normalizedKey) {
     normalizedCategory.key = normalizedKey;
   }
 
@@ -94,10 +88,7 @@ const normalizeChannel = (channel, index, categoryIds, warnings) => {
     normalizedChannel.id = normalizedId;
   }
 
-  if (!normalizedChannel.key && normalizedId) {
-    normalizedChannel.key = normalizedId;
-    warnings.push(`channels[${index}] used id as key.`);
-  } else if (normalizedKey) {
+  if (normalizedKey) {
     normalizedChannel.key = normalizedKey;
   }
 

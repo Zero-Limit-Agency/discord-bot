@@ -1,0 +1,33 @@
+{
+  "__expected": {
+    "status": "success",
+    "repaired": true,
+    "warningIncludes": [
+      "assigned to default category"
+    ],
+    "channelCategoryRefs": {
+      "general": "lobby"
+    }
+  },
+  "name": "Missing Category Assignment",
+  "description": "Channel should be attached to the first category.",
+  "roles": [],
+  "categories": [
+    {
+      "id": "lobby",
+      "name": "Lobby"
+    }
+  ],
+  "channels": [
+    {
+      "id": "general",
+      "name": "general",
+      "type": "text"
+    }
+  ],
+  "welcomeEmbeds": [
+    {
+      "title": "Hi"
+    }
+  ]
+}

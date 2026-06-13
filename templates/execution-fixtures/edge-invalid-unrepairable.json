@@ -1,0 +1,19 @@
+{
+  "__expected": {
+    "status": "blocked",
+    "errorIncludes": [
+      "roles could not be normalized"
+    ]
+  },
+  "name": "",
+  "description": "This fixture should be blocked intentionally.",
+  "roles": "not-an-array",
+  "categories": [],
+  "channels": [
+    {
+      "name": "oops",
+      "type": "stage"
+    }
+  ],
+  "welcomeEmbeds": "still-not-an-array"
+}

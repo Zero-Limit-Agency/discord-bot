@@ -1,0 +1,29 @@
+{
+  "__expected": {
+    "status": "success",
+    "repaired": false,
+    "onboardingTarget": "welcome"
+  },
+  "name": "Minimal Server",
+  "description": "Minimal valid execution fixture.",
+  "roles": [],
+  "categories": [
+    {
+      "id": "info",
+      "name": "Info"
+    }
+  ],
+  "channels": [
+    {
+      "id": "welcome",
+      "name": "welcome",
+      "type": "text",
+      "categoryId": "info"
+    }
+  ],
+  "welcomeEmbeds": [
+    {
+      "title": "Welcome"
+    }
+  ]
+}

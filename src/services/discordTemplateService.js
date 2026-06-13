@@ -385,6 +385,65 @@ const validateTemplate = (template) => {
   };
 };
 
+const prepareTemplate = (parsed, metadata = {}) => {
+  const normalizedSlug = String(metadata.slug || '').trim().toLowerCase() || 'inline-template';
+  const normalized = normalizeTemplate(parsed);
+
+  if (!normalized.ok) {
+    return {
+      ok: false,
+      code: normalized.code || 'TEMPLATE_NORMALIZATION_ERROR',
+      message: normalized.message || 'Template could not be normalized.',
+      errors: [normalized.message || 'Template normalization failed.'],
+      warnings: normalized.normalizationWarnings || [],
+    };
+  }
+
+  const repaired = repairTemplate(normalized.normalizedTemplate);
+  const template = repaired.ok ? repaired.repairedTemplate : normalized.normalizedTemplate;
+  const pipelineWarnings = [
+    ...(normalized.normalizationWarnings || []),
+    ...(repaired.repairWarnings || []),
+  ];
+
+  if (!repaired.ok) {
+    pipelineWarnings.push(repaired.message || 'Template repair failed and validation continued with normalized data.');
+  }
+
+  const validation = validateTemplate(template);
+  const mergedWarnings = [...pipelineWarnings, ...validation.warnings];
+
+  if (!validation.isValid) {
+    logger.warn('Discord template validation failed', {
+      template: normalizedSlug,
+      errors: validation.errors.length,
+      warnings: mergedWarnings.length,
+    });
+
+    return {
+      ok: false,
+      code: 'INVALID_TEMPLATE',
+      message: 'Template JSON is invalid.',
+      errors: validation.errors,
+      warnings: mergedWarnings,
+    };
+  }
+
+  return {
+    ok: true,
+    slug: normalizedSlug,
+    source: metadata.source || 'memory',
+    path: metadata.path || null,
+    template,
+    validation: {
+      ...validation,
+      warnings: mergedWarnings,
+    },
+    normalizationWarnings: normalized.normalizationWarnings || [],
+    repairWarnings: repaired.repairWarnings || [],
+  };
+};
+
 const loadTemplate = (slug) => {
   const normalizedSlug = String(slug || '').trim().toLowerCase();
 
@@ -417,61 +476,11 @@ const loadTemplate = (slug) => {
   try {
     const raw = fs.readFileSync(templatePath, 'utf8');
     const parsed = JSON.parse(raw);
-    const normalized = normalizeTemplate(parsed);
-
-    if (!normalized.ok) {
-      return {
-        ok: false,
-        code: normalized.code || 'TEMPLATE_NORMALIZATION_ERROR',
-        message: normalized.message || 'Template could not be normalized.',
-        errors: [normalized.message || 'Template normalization failed.'],
-        warnings: normalized.normalizationWarnings || [],
-      };
-    }
-
-    const repaired = repairTemplate(normalized.normalizedTemplate);
-    const template = repaired.ok ? repaired.repairedTemplate : normalized.normalizedTemplate;
-    const pipelineWarnings = [
-      ...(normalized.normalizationWarnings || []),
-      ...(repaired.repairWarnings || []),
-    ];
-
-    if (!repaired.ok) {
-      pipelineWarnings.push(repaired.message || 'Template repair failed and validation continued with normalized data.');
-    }
-
-    const validation = validateTemplate(template);
-    const mergedWarnings = [...pipelineWarnings, ...validation.warnings];
-
-    if (!validation.isValid) {
-      logger.warn('Discord template validation failed', {
-        template: normalizedSlug,
-        errors: validation.errors.length,
-        warnings: mergedWarnings.length,
-      });
-
-      return {
-        ok: false,
-        code: 'INVALID_TEMPLATE',
-        message: 'Template JSON is invalid.',
-        errors: validation.errors,
-        warnings: mergedWarnings,
-      };
-    }
-
-    return {
-      ok: true,
+    return prepareTemplate(parsed, {
       slug: normalizedSlug,
       source: matchingDirectory.source,
       path: templatePath,
-      template,
-      validation: {
-        ...validation,
-        warnings: mergedWarnings,
-      },
-      normalizationWarnings: normalized.normalizationWarnings || [],
-      repairWarnings: repaired.repairWarnings || [],
-    };
+    });
   } catch (error) {
     logger.error('Failed to load Discord template', {
       template: normalizedSlug,
@@ -491,6 +500,7 @@ const loadTemplate = (slug) => {
 module.exports = {
   listTemplates,
   loadTemplate,
+  prepareTemplate,
   validateTemplate,
   validChannelTypes,
 };
