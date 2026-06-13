@@ -1,0 +1,10 @@
+{
+  "name": "brief-premium-private",
+  "prompt": "Serveur privé premium pour clients VIP avec un espace public très limité, un espace support/tickets, une zone staff, et des accès premium séparés. Je veux quelque chose de très propre et sérieux.",
+  "expected": {
+    "serverType": "premium-community",
+    "permissionHintsIncludes": ["@everyone-limited", "private-staff-areas", "premium-separation"],
+    "supportHintsIncludes": ["support-channel", "ticket-flow"],
+    "tone": "premium"
+  }
+}

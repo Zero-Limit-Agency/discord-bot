@@ -1,4 +1,4 @@
-const buildContentAgentRequest = ({ architecture, model, correctionNote = '' }) => ({
+const buildContentAgentRequest = ({ architecture, normalizedBrief, model, correctionNote = '' }) => ({
   model,
   temperature: 0.2,
   messages: [
@@ -15,6 +15,7 @@ const buildContentAgentRequest = ({ architecture, model, correctionNote = '' }) 
         'If you reference a channel or role in notes, use only ids already present in the architecture JSON.',
         'Keep embed text short, clean, and valid for Discord.',
         'If no rule/support/ticket guidance is needed, return empty arrays instead of filler text.',
+        'Use the normalized brief to respect tone, goals, onboarding hints, support hints, and explicit constraints.',
       ].join('\n'),
     },
     {
@@ -22,6 +23,8 @@ const buildContentAgentRequest = ({ architecture, model, correctionNote = '' }) 
       content: [
         'Architecture JSON:',
         JSON.stringify(architecture, null, 2),
+        normalizedBrief ? '\nNormalized brief JSON:' : '',
+        normalizedBrief ? JSON.stringify(normalizedBrief, null, 2) : '',
         '',
         'Return this exact JSON shape:',
         '{',

@@ -1,0 +1,10 @@
+{
+  "name": "brief-long-esport-messy",
+  "prompt": "Alors en gros j'ai besoin d'un serveur pour une orga esport. Il faut un espace public propre pour la commu, un coin staff privé, un coin joueurs privé, des annonces, du support, du vocal, et quelque chose de premium, pas un serveur brouillon. Il y a aussi des scrims, des tournois et il faut accueillir les nouveaux correctement même si je n'ai pas toute la structure en tête.",
+  "expected": {
+    "serverType": "esports",
+    "requiredAreasIncludes": ["public-community", "staff-operations", "team-operations", "support", "voice"],
+    "goalsIncludes": ["premium-presentation", "clear-onboarding"],
+    "assumptionsMin": 1
+  }
+}

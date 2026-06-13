@@ -30,6 +30,10 @@ const {
   summarizeDiagnostics,
   uniqueDiagnostics,
 } = require('../utils/templateDiagnostics');
+const {
+  normalizeBuildBrief,
+  writeNormalizedBriefDebugFile,
+} = require('../services/buildBriefNormalizer');
 const fs = require('node:fs');
 const path = require('node:path');
 
@@ -276,6 +280,8 @@ const writeBuildCrashDebugFile = (error) => {
   fs.writeFileSync(filePath, `${crashContent}\n`, 'utf8');
   return filePath;
 };
+
+const createBuildRunId = () => new Date().toISOString().replace(/[:.]/g, '-');
 
 const safeCount = (value, fallback = 0) => {
   if (Number.isFinite(value)) {
@@ -612,6 +618,7 @@ const createBuildEmbed = (result, report = null) => {
     lmStudio,
     generatedTemplate,
     pipelineMeta,
+    briefMeta,
   } = result;
   const extractedCharacters = request.source.attachment
     ? safeNumberLabel(safeCount(request.source.attachment.text?.length, 0), '0')
@@ -630,6 +637,7 @@ const createBuildEmbed = (result, report = null) => {
   const dryRunStatus = report?.dryRunResult?.dryRun?.finalStatus || 'Not run';
   const importantWarnings = uniqueDiagnostics([
     ...attachmentWarnings,
+    ...(briefMeta?.warning ? [briefMeta.warning] : []),
     ...normalizationWarnings,
     ...repairWarnings,
     ...validationWarnings,
@@ -681,6 +689,9 @@ const createBuildEmbed = (result, report = null) => {
       safeEmbedField('Pipeline Mode', pipelineMeta?.mode || 'single', true),
       safeEmbedField('Template Status', templateStatus, true),
       safeEmbedField('Dry Run Status', dryRunStatus || 'Not run', true),
+      safeEmbedField('Brief', briefMeta?.mode === 'normalized' ? 'normalized' : 'fallback', true),
+      safeEmbedField('Server Type', briefMeta?.serverType || 'general', true),
+      safeEmbedField('Assumptions', safeNumberLabel(briefMeta?.assumptionsCount, '0'), true),
       safeEmbedField('Warnings', String(countDiagnostics(importantWarnings)), true),
       safeEmbedField('Actions Planned', totalActions ? String(totalActions) : 'Not available', true),
       safeEmbedField('Payload Count', totalPayloads ? String(totalPayloads) : 'Not available', true),
@@ -767,6 +778,7 @@ const createBuildEmbed = (result, report = null) => {
         [
           `Folder: ${debugFolder || 'Not written (production mode)'}`,
           `Assets: ${summarizeDebugAssets({ debugFilePath, finalPromptDebugFilePath, pipelineMeta, generatedTemplate })}`,
+          `Brief: ${briefMeta?.debugFilePath || 'Not written (production mode)'}`,
           `Draft: ${draftPath || 'Not saved'}`,
         ].join('\n'),
         false,
@@ -1017,10 +1029,34 @@ module.exports = {
         attachmentContent = attachmentResult;
       }
 
+      const buildRunId = createBuildRunId();
+      const briefNormalizationResult = normalizeBuildBrief({
+        prompt,
+        attachment: attachmentContent,
+      });
+      const normalizedBrief = briefNormalizationResult.normalizedBrief || null;
+      const briefDebugFilePath = writeNormalizedBriefDebugFile({
+        runId: buildRunId,
+        normalizedBrief,
+        metadata: {
+          mode: briefNormalizationResult.mode,
+          warning: briefNormalizationResult.warning || null,
+          attachmentPresent: Boolean(attachmentContent),
+        },
+      });
+      const briefMeta = {
+        mode: briefNormalizationResult.mode || 'fallback',
+        warning: briefNormalizationResult.warning || null,
+        serverType: normalizedBrief?.serverType || 'general',
+        assumptionsCount: Array.isArray(normalizedBrief?.assumptions) ? normalizedBrief.assumptions.length : 0,
+        debugFilePath: briefDebugFilePath,
+      };
+
       const result = buildLmStudioRequest({
         prompt,
         attachment: attachmentContent,
         requestedBy: interaction.user,
+        normalizedBrief,
       });
 
       if (!result.ok) {
@@ -1056,6 +1092,7 @@ module.exports = {
           const pipelineResult = await runBuildAgentPipeline({
             prompt,
             attachment: attachmentContent,
+            normalizedBrief,
           });
 
           pipelineMeta = {
@@ -1140,6 +1177,7 @@ module.exports = {
             lmStudio,
             generatedTemplate,
             pipelineMeta,
+            briefMeta,
           }, buildReport?.ok ? buildReport : null),
         ];
 
@@ -1180,6 +1218,7 @@ module.exports = {
               lmStudio,
               generatedTemplate,
               pipelineMeta,
+              briefMeta,
             }, null),
             createReportErrorEmbed({
               pipelineMode: pipelineMeta?.mode,

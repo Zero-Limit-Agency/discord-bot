@@ -72,7 +72,30 @@ const normalizeAttachment = (attachment) => {
   };
 };
 
-const buildLmStudioRequest = ({ prompt, attachment, requestedBy }) => {
+const formatNormalizedBriefSection = (normalizedBrief) => {
+  if (!normalizedBrief) {
+    return '';
+  }
+
+  return [
+    'Normalized brief:',
+    `Summary: ${normalizedBrief.summary || 'N/A'}`,
+    `Server Type: ${normalizedBrief.serverType || 'general'}`,
+    `Tone: ${normalizedBrief.tone || 'professional'}`,
+    `Audience: ${(normalizedBrief.audience || []).join(', ') || 'N/A'}`,
+    `Goals: ${(normalizedBrief.goals || []).join(', ') || 'N/A'}`,
+    `Required Areas: ${(normalizedBrief.requiredAreas || []).join(', ') || 'N/A'}`,
+    `Roles Mentioned: ${(normalizedBrief.rolesMentioned || []).join(', ') || 'N/A'}`,
+    `Channels Mentioned: ${(normalizedBrief.channelsMentioned || []).join(', ') || 'N/A'}`,
+    `Permission Hints: ${(normalizedBrief.permissionHints || []).join(', ') || 'N/A'}`,
+    `Onboarding Hints: ${(normalizedBrief.onboardingHints || []).join(', ') || 'N/A'}`,
+    `Support Hints: ${(normalizedBrief.supportHints || []).join(', ') || 'N/A'}`,
+    `Constraints: ${(normalizedBrief.constraints || []).join(' | ') || 'N/A'}`,
+    `Assumptions: ${(normalizedBrief.assumptions || []).join(' | ') || 'N/A'}`,
+  ].join('\n');
+};
+
+const buildLmStudioRequest = ({ prompt, attachment, requestedBy, normalizedBrief = null }) => {
   const normalizedPrompt = sanitizePrompt(prompt);
   const normalizedAttachment = normalizeAttachment(attachment);
 
@@ -96,6 +119,10 @@ const buildLmStudioRequest = ({ prompt, attachment, requestedBy }) => {
 
   if (normalizedPrompt) {
     userContent.push(`Prompt:\n${normalizedPrompt}`);
+  }
+
+  if (normalizedBrief) {
+    userContent.push(formatNormalizedBriefSection(normalizedBrief));
   }
 
   if (normalizedAttachment) {
@@ -150,6 +177,7 @@ const buildLmStudioRequest = ({ prompt, attachment, requestedBy }) => {
     source: {
       prompt: normalizedPrompt || null,
       attachment: normalizedAttachment,
+      normalizedBrief,
     },
     requestPayload: {
       model: config.lmStudioModel || 'MODEL_NOT_CONFIGURED',
@@ -194,6 +222,7 @@ const buildLmStudioRequest = ({ prompt, attachment, requestedBy }) => {
       selectedSkills: skillsBlock.selectedSkills,
       truncated: skillsBlock.truncated,
     },
+    normalizedBrief,
   };
 };
 

@@ -12,7 +12,14 @@ const BASE_SYSTEM_LINES = [
   'If details are missing, make reasonable professional choices.',
 ];
 
-const buildArchitectAgentRequest = ({ prompt, attachment, skillsBlock, model, correctionNote = '' }) => {
+const buildArchitectAgentRequest = ({
+  prompt,
+  attachment,
+  normalizedBrief,
+  skillsBlock,
+  model,
+  correctionNote = '',
+}) => {
   const userSections = [];
 
   if (prompt) {
@@ -21,6 +28,16 @@ const buildArchitectAgentRequest = ({ prompt, attachment, skillsBlock, model, co
 
   if (attachment?.text) {
     userSections.push(`Attached source content:\n${attachment.text}`);
+  }
+
+  if (normalizedBrief) {
+    userSections.push([
+      'Normalized brief JSON:',
+      JSON.stringify(normalizedBrief, null, 2),
+      '',
+      'Use this structured brief to understand audience, goals, roles, areas, constraints, and assumptions.',
+      'Respect explicit user constraints and only make reasonable assumptions when required.',
+    ].join('\n'));
   }
 
   userSections.push([

@@ -658,7 +658,7 @@ const stopWithFailure = ({
   skillsMeta,
 });
 
-const runBuildAgentPipeline = async ({ prompt, attachment }) => {
+const runBuildAgentPipeline = async ({ prompt, attachment, normalizedBrief = null }) => {
   const runId = createRunId();
   const runDirectoryPath = isProduction()
     ? null
@@ -680,6 +680,7 @@ const runBuildAgentPipeline = async ({ prompt, attachment }) => {
       buildRequestPayload: (correctionNote) => buildArchitectAgentRequest({
         prompt,
         attachment,
+        normalizedBrief,
         skillsBlock,
         model,
         correctionNote,
@@ -705,6 +706,7 @@ const runBuildAgentPipeline = async ({ prompt, attachment }) => {
       agent: 'permissions',
       buildRequestPayload: (correctionNote) => buildPermissionsAgentRequest({
         architecture: architectRun.output,
+        normalizedBrief,
         model,
         correctionNote,
       }),
@@ -729,6 +731,7 @@ const runBuildAgentPipeline = async ({ prompt, attachment }) => {
       agent: 'content',
       buildRequestPayload: (correctionNote) => buildContentAgentRequest({
         architecture: architectRun.output,
+        normalizedBrief,
         model,
         correctionNote,
       }),
@@ -778,6 +781,7 @@ const runBuildAgentPipeline = async ({ prompt, attachment }) => {
       runDirectoryPath,
       finalJson: assemblerRun.output,
       finalRaw: assemblerRun.rawResponse,
+      normalizedBrief,
       agentRuns,
       skillsMeta,
     };

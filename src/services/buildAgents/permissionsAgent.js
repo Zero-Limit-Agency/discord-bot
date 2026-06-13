@@ -1,4 +1,4 @@
-const buildPermissionsAgentRequest = ({ architecture, model, correctionNote = '' }) => ({
+const buildPermissionsAgentRequest = ({ architecture, normalizedBrief, model, correctionNote = '' }) => ({
   model,
   temperature: 0.1,
   messages: [
@@ -15,6 +15,7 @@ const buildPermissionsAgentRequest = ({ architecture, model, correctionNote = ''
         'Every channelOverwrites entry must point to a real channel reference.',
         'Prefer semantic role ids like staff, admin, premium, member.',
         'Never use unsupported permissions like administrator, ban_members, kick_members, manage_roles, manage_server, manage_guild_expressions, add_reactions, use_application_commands, or view_audit_log.',
+        'Use the normalized brief when it clarifies audience, required areas, permission hints, onboarding, support, or constraints.',
       ].join('\n'),
     },
     {
@@ -22,6 +23,8 @@ const buildPermissionsAgentRequest = ({ architecture, model, correctionNote = ''
       content: [
         'Architecture JSON:',
         JSON.stringify(architecture, null, 2),
+        normalizedBrief ? '\nNormalized brief JSON:' : '',
+        normalizedBrief ? JSON.stringify(normalizedBrief, null, 2) : '',
         '',
         'Return this exact JSON shape:',
         '{',

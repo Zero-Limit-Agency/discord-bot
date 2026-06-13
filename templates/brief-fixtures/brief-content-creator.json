@@ -1,0 +1,10 @@
+{
+  "name": "brief-content-creator",
+  "prompt": "Je veux un serveur pour une équipe de créateurs de contenu. Il faut des espaces médias, annonces, partenariat, support membres et un ton pro mais accueillant. Pas besoin de trop de salons inutiles.",
+  "expected": {
+    "serverType": "content-creator",
+    "channelsMentionedIncludes": ["media", "announcements", "support"],
+    "goalsIncludes": ["content-publishing", "member-support"],
+    "tone": "professional"
+  }
+}

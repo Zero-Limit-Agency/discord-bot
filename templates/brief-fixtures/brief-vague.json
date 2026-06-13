@@ -1,0 +1,9 @@
+{
+  "name": "brief-vague",
+  "prompt": "Je veux un serveur Discord propre et moderne pour ma communauté, mais je ne sais pas encore exactement quoi mettre.",
+  "expected": {
+    "serverType": "community",
+    "missingButUsefulMin": 2,
+    "assumptionsMin": 1
+  }
+}

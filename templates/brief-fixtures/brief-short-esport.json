@@ -1,0 +1,10 @@
+{
+  "name": "brief-short-esport",
+  "prompt": "Crée un serveur Discord premium pour une team esport avec staff, joueurs, annonces, scrims et onboarding.",
+  "expected": {
+    "serverType": "esports",
+    "requiredAreasIncludes": ["team-operations", "onboarding"],
+    "rolesMentionedIncludes": ["staff", "player"],
+    "tone": "premium"
+  }
+}
