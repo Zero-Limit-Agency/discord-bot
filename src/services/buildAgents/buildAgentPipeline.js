@@ -196,6 +196,7 @@ const createAgentFailureResult = ({
   error,
   timeout = false,
   extractionMode = null,
+  ...extra
 }) => ({
   success: false,
   status: timeout ? 'timeout' : 'failed',
@@ -211,6 +212,7 @@ const createAgentFailureResult = ({
   timeout,
   extractionMode,
   output: null,
+  ...extra,
 });
 
 const createAgentSuccessResult = ({
@@ -224,6 +226,7 @@ const createAgentSuccessResult = ({
   extractionMode,
   output,
   rawResponse,
+  ...extra
 }) => ({
   success: true,
   status: 'success',
@@ -240,6 +243,7 @@ const createAgentSuccessResult = ({
   extractionMode,
   output,
   rawResponse,
+  ...extra,
 });
 
 const runAgent = async ({
@@ -417,6 +421,10 @@ const runLocalAssembler = ({
       mode: 'local-merge',
       message: finalGuard.ok ? null : finalGuard.errors.join(' | '),
     });
+    const warningsPath = writeDebugJsonFile(runDirectoryPath, 'assembler', 'warnings.json', {
+      assemblyWarnings: assembly.warnings,
+      finalWarnings: finalGuard.warnings,
+    });
 
     if (!finalGuard.ok) {
       logger.error('Build agent failed', {
@@ -455,6 +463,8 @@ const runLocalAssembler = ({
       extractionMode: 'local-merge',
       output: finalGuard.output,
       rawResponse: JSON.stringify(finalGuard.output, null, 2),
+      warningsPath,
+      agentWarnings: [...assembly.warnings, ...finalGuard.warnings],
     });
   } catch (error) {
     const errorMessage = summarizeError(error, 'The local assembler failed unexpectedly.');
@@ -540,6 +550,7 @@ const runGuardedAgent = async ({
   agent,
   buildRequestPayload,
   guardOutput,
+  guardContext = {},
   runDirectoryPath,
   timeoutMs,
   maxRetries,
@@ -571,7 +582,7 @@ const runGuardedAgent = async ({
       continue;
     }
 
-    const guardResult = guardOutput(result.output);
+    const guardResult = guardOutput(result.output, guardContext);
     const guardDebugPath = writeDebugJsonFile(runDirectoryPath, `${agent}-attempt-${attempt + 1}`, 'guard.json', {
       ok: guardResult.ok,
       errors: guardResult.errors,
@@ -722,6 +733,9 @@ const runBuildAgentPipeline = async ({ prompt, attachment }) => {
         correctionNote,
       }),
       guardOutput: guardContentOutput,
+      guardContext: {
+        architecture: architectRun.output,
+      },
       runDirectoryPath,
       timeoutMs: getAgentTimeoutMs('content'),
       maxRetries,

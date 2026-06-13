@@ -506,6 +506,39 @@ const summarizeAgentRetries = (agentRuns) => {
     .join('\n');
 };
 
+const summarizeAgentRepairs = (agentRuns) => {
+  if (!Array.isArray(agentRuns) || !agentRuns.length) {
+    return 'N/A';
+  }
+
+  const repairedAgents = agentRuns
+    .filter((agentRun) => (agentRun.retriesUsed || 0) > 0 || (agentRun.agentWarnings || []).length > 0 || (agentRun.guardWarnings || []).length > 0)
+    .map((agentRun) => {
+      const warningCount = (agentRun.agentWarnings || []).length + (agentRun.guardWarnings || []).length;
+      return `${agentRun.agent || agentRun.agentName || 'unknown'}: retries=${safeNumberLabel(agentRun.retriesUsed, '0')}, warnings=${warningCount}`;
+    });
+
+  return repairedAgents.length ? repairedAgents.join('\n') : 'None';
+};
+
+const summarizeImportantAgentWarnings = (agentRuns) => {
+  if (!Array.isArray(agentRuns) || !agentRuns.length) {
+    return 'None';
+  }
+
+  const collected = [];
+
+  agentRuns.forEach((agentRun) => {
+    const agentName = agentRun.agent || agentRun.agentName || 'unknown';
+    const warnings = [...(agentRun.agentWarnings || []), ...(agentRun.guardWarnings || [])];
+    warnings.slice(0, 2).forEach((warning) => {
+      collected.push(`${agentName}: ${warning}`);
+    });
+  });
+
+  return collected.length ? collected.slice(0, 6).join('\n') : 'None';
+};
+
 const createMultiAgentFailureEmbed = ({ failedAgent, pipelineMeta, lmStudio }) => {
   const completedAgents = (pipelineMeta?.agentRuns || [])
     .filter((agentRun) => agentRun.success)
@@ -526,6 +559,7 @@ const createMultiAgentFailureEmbed = ({ failedAgent, pipelineMeta, lmStudio }) =
       safeEmbedField('Agent Durations', summarizeAgentDurations(pipelineMeta?.agentRuns), false),
       safeEmbedField('Agent Timeouts', summarizeAgentTimeouts(pipelineMeta?.agentRuns), false),
       safeEmbedField('Agent Retries', summarizeAgentRetries(pipelineMeta?.agentRuns), false),
+      safeEmbedField('Agent Repairs', summarizeAgentRepairs(pipelineMeta?.agentRuns), false),
       safeEmbedField('Error', failedRun?.error || lmStudio?.errorMessage || 'Unknown error', false),
       safeEmbedField('Duration', `${safeNumberLabel(failedRun?.durationMs, 'N/A')} ms`, true),
       safeEmbedField('Raw Response', failedRun?.rawResponsePath || 'Not written (production mode)', false),
@@ -591,6 +625,7 @@ const createBuildEmbed = (result, report = null) => {
       safeEmbedField('Agent Durations', summarizeAgentDurations(pipelineMeta?.agentRuns), false),
       safeEmbedField('Agent Timeouts', summarizeAgentTimeouts(pipelineMeta?.agentRuns), false),
       safeEmbedField('Agent Retries', summarizeAgentRetries(pipelineMeta?.agentRuns), false),
+      safeEmbedField('Agent Repairs', summarizeAgentRepairs(pipelineMeta?.agentRuns), false),
       safeEmbedField('JSON Extraction', lmStudio.jsonExtraction || 'Not attempted', true),
       safeEmbedField('Normalization', generatedTemplate?.normalizationStatus || 'Not attempted', true),
       safeEmbedField('Repair Applied', generatedTemplate?.repairStatus || 'Not attempted', true),
@@ -619,6 +654,7 @@ const createBuildEmbed = (result, report = null) => {
       safeEmbedField('Normalization Warnings', normalizationWarnings.length ? normalizationWarnings.slice(0, 6).join('\n') : 'None', false),
       safeEmbedField('Repair Warnings', repairWarnings.length ? repairWarnings.slice(0, 6).join('\n') : 'None', false),
       safeEmbedField('Validation Warnings', validationWarnings.length ? validationWarnings.slice(0, 6).join('\n') : 'None', false),
+      safeEmbedField('Important Agent Warnings', summarizeImportantAgentWarnings(pipelineMeta?.agentRuns), false),
       safeEmbedField('Debug Request', debugFilePath || 'Not written (production mode)', false),
       safeEmbedField('Debug Final Prompt', finalPromptDebugFilePath || 'Not written (production mode)', false),
       safeEmbedField('Debug Raw Response', lmStudio.rawResponseDebugFilePath || 'Not written (production mode)', false),

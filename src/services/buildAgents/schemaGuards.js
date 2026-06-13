@@ -27,6 +27,9 @@ const slugify = (value, fallback) => {
 };
 
 const ensureArray = (value) => (Array.isArray(value) ? value : []);
+const MAX_EMBED_TITLE_LENGTH = 256;
+const MAX_EMBED_DESCRIPTION_LENGTH = 4000;
+const MAX_NOTE_TEXT_LENGTH = 1000;
 
 const normalizePermissionName = (permission) => toCleanString(permission)
   .toLowerCase()
@@ -270,9 +273,114 @@ const guardPermissionsOutput = (output) => {
   };
 };
 
-const guardContentOutput = (output) => {
+const trimToLength = (value, maxLength) => {
+  const cleaned = toCleanString(value);
+
+  if (cleaned.length <= maxLength) {
+    return cleaned;
+  }
+
+  return cleaned.slice(0, maxLength).trim();
+};
+
+const collectKnownRefs = (architecture) => {
+  const channelRefs = new Set(
+    ensureArray(architecture?.channels)
+      .flatMap((channel) => [channel?.id, channel?.key, channel?.name])
+      .map((value) => toCleanString(value).toLowerCase())
+      .filter(Boolean),
+  );
+  const roleRefs = new Set(
+    ensureArray(architecture?.roles)
+      .flatMap((role) => [role?.id, role?.key, role?.name])
+      .map((value) => toCleanString(value).toLowerCase())
+      .filter(Boolean),
+  );
+
+  return {
+    channelRefs,
+    roleRefs,
+  };
+};
+
+const sanitizeOptionalRef = (value, knownRefs, warnings, pathLabel, refType) => {
+  const normalized = toCleanString(value);
+
+  if (!normalized) {
+    return null;
+  }
+
+  if (!knownRefs.has(normalized.toLowerCase())) {
+    warnings.push(`${pathLabel} dropped unknown ${refType} reference "${normalized}".`);
+    return null;
+  }
+
+  return normalized;
+};
+
+const sanitizeSimpleContentItem = (item, index, warnings, knownRefs, collectionName) => {
+  if (typeof item === 'string') {
+    const text = trimToLength(item, MAX_NOTE_TEXT_LENGTH);
+
+    if (!text) {
+      warnings.push(`${collectionName}[${index}] was dropped because it was empty.`);
+      return null;
+    }
+
+    if (text.length !== toCleanString(item).length) {
+      warnings.push(`${collectionName}[${index}] text was truncated.`);
+    }
+
+    return { text };
+  }
+
+  if (!isPlainObject(item)) {
+    warnings.push(`${collectionName}[${index}] was dropped because it is not an object or string.`);
+    return null;
+  }
+
+  const text = trimToLength(item.text || item.description || item.message || item.note, MAX_NOTE_TEXT_LENGTH);
+
+  if (!text) {
+    warnings.push(`${collectionName}[${index}] was dropped because it had no usable text.`);
+    return null;
+  }
+
+  const sanitized = {
+    text,
+  };
+
+  const channelId = sanitizeOptionalRef(
+    item.channelId || item.channelKey || item.channel || item.targetChannelId,
+    knownRefs.channelRefs,
+    warnings,
+    `${collectionName}[${index}]`,
+    'channel',
+  );
+
+  if (channelId) {
+    sanitized.channelId = channelId;
+  }
+
+  const roleId = sanitizeOptionalRef(
+    item.roleId || item.roleKey || item.role || item.targetRoleId,
+    knownRefs.roleRefs,
+    warnings,
+    `${collectionName}[${index}]`,
+    'role',
+  );
+
+  if (roleId) {
+    sanitized.roleId = roleId;
+  }
+
+  return sanitized;
+};
+
+const guardContentOutput = (output, context = {}) => {
   const errors = [];
   const warnings = [];
+  const knownRefs = collectKnownRefs(context.architecture);
 
   if (!isPlainObject(output)) {
     return {
@@ -286,19 +394,58 @@ const guardContentOutput = (output) => {
   const welcomeEmbeds = ensureArray(output.welcomeEmbeds).map((embed, index) => {
     if (typeof embed === 'string' && embed.trim()) {
       warnings.push(`welcomeEmbeds[${index}] string was converted to a title-only embed.`);
-      return { title: embed.trim() };
+      return { title: trimToLength(embed, MAX_EMBED_TITLE_LENGTH) };
     }
 
-    return embed;
-  });
+    if (!isPlainObject(embed)) {
+      warnings.push(`welcomeEmbeds[${index}] was dropped because it is not a valid embed object.`);
+      return null;
+    }
+
+    const title = trimToLength(embed.title, MAX_EMBED_TITLE_LENGTH);
+    const description = trimToLength(embed.description, MAX_EMBED_DESCRIPTION_LENGTH);
+
+    if (!title && !description) {
+      warnings.push(`welcomeEmbeds[${index}] was dropped because it had no usable title or description.`);
+      return null;
+    }
+
+    if (embed.title && title.length !== toCleanString(embed.title).length) {
+      warnings.push(`welcomeEmbeds[${index}].title was truncated.`);
+    }
+
+    if (embed.description && description.length !== toCleanString(embed.description).length) {
+      warnings.push(`welcomeEmbeds[${index}].description was truncated.`);
+    }
+
+    return {
+      title: title || undefined,
+      description: description || undefined,
+      color: embed.color,
+    };
+  }).filter(Boolean);
+
+  const rules = ensureArray(output.rules)
+    .map((item, index) => sanitizeSimpleContentItem(item, index, warnings, knownRefs, 'rules'))
+    .filter(Boolean);
+  const onboardingNotes = ensureArray(output.onboardingNotes)
+    .map((item, index) => sanitizeSimpleContentItem(item, index, warnings, knownRefs, 'onboardingNotes'))
+    .filter(Boolean);
+  const ticketGuidance = ensureArray(output.ticketGuidance)
+    .map((item, index) => sanitizeSimpleContentItem(item, index, warnings, knownRefs, 'ticketGuidance'))
+    .filter(Boolean);
+
+  if (!welcomeEmbeds.length && !rules.length && !onboardingNotes.length && !ticketGuidance.length) {
+    errors.push('Content output is empty after cleanup.');
+  }
 
   return {
     ok: errors.length === 0,
     output: {
       welcomeEmbeds,
-      rules: ensureArray(output.rules),
-      onboardingNotes: ensureArray(output.onboardingNotes),
-      ticketGuidance: ensureArray(output.ticketGuidance),
+      rules,
+      onboardingNotes,
+      ticketGuidance,
     },
     errors,
     warnings,
