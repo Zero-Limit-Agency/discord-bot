@@ -10,6 +10,10 @@ const BASE_SYSTEM_LINES = [
   'Never use placeholders like role-1, channel-1, category-1 when a real semantic id is possible.',
   'Every role, category, and channel must have a stable id and key.',
   'If details are missing, make reasonable professional choices.',
+  'Respect explicit areas, channels, roles, support needs, onboarding needs, and premium/private constraints from the user brief.',
+  'If the brief mentions scrims, tournaments, tryouts, premium/VIP areas, creator spaces, support, or staff areas, include them in the architecture.',
+  'For content creator teams, prefer at least creator and staff/moderation roles when the brief implies managed community spaces.',
+  'For premium/private communities, make the public area minimal and keep staff/premium zones distinct.',
 ];
 
 const buildArchitectAgentRequest = ({

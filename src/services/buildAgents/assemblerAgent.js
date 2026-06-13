@@ -205,6 +205,123 @@ const normalizeRoleRefs = (roles) => new Set(
   roles.flatMap((role) => [role.id, role.key, role.name]).map(normalizeIdentifier).filter(Boolean),
 );
 
+const createCategoryLookup = (categories) => new Map(
+  categories.map((category) => [
+    normalizeIdentifier(category.id || category.key || category.name),
+    category,
+  ]).filter(([key]) => key),
+);
+
+const getChannelContextText = (channel, categoryLookup) => {
+  const category = categoryLookup.get(normalizeIdentifier(channel.categoryId));
+
+  return [
+    channel?.id,
+    channel?.key,
+    channel?.name,
+    category?.id,
+    category?.key,
+    category?.name,
+  ]
+    .filter(Boolean)
+    .join(' ')
+    .toLowerCase();
+};
+
+const getExpectedAccessRole = (contextText, roles) => {
+  const roleIds = new Set(roles.map((role) => normalizeIdentifier(role.id || role.key || role.name)).filter(Boolean));
+
+  if (/staff|admin|mod/.test(contextText) && roleIds.has('staff')) {
+    return 'staff';
+  }
+
+  if (/(vip|premium)/.test(contextText)) {
+    if (roleIds.has('premium')) {
+      return 'premium';
+    }
+
+    if (roleIds.has('vip')) {
+      return 'vip';
+    }
+  }
+
+  if (/(player|team|scrim|tournament|tryout)/.test(contextText) && roleIds.has('player')) {
+    return 'player';
+  }
+
+  if (/(creator|media|content)/.test(contextText) && roleIds.has('creator')) {
+    return 'creator';
+  }
+
+  return '';
+};
+
+const getSuggestedAllowPermissions = (channel, roleId, contextText) => {
+  if (channel.type === 'voice') {
+    return roleId === 'staff'
+      ? ['view_channel', 'connect', 'speak']
+      : ['view_channel', 'connect', 'speak'];
+  }
+
+  if (roleId === 'staff') {
+    if (/(support|ticket)/.test(contextText)) {
+      return ['view_channel', 'send_messages', 'read_message_history', 'manage_messages'];
+    }
+
+    return ['view_channel', 'send_messages', 'read_message_history', 'manage_messages'];
+  }
+
+  return ['view_channel', 'send_messages', 'read_message_history'];
+};
+
+const ensureInferredPrivateOverwrites = (channels, categories, roles, warnings) => {
+  const categoryLookup = createCategoryLookup(categories);
+
+  channels.forEach((channel) => {
+    const contextText = getChannelContextText(channel, categoryLookup);
+    const expectedRole = getExpectedAccessRole(contextText, roles);
+
+    if (!expectedRole) {
+      return;
+    }
+
+    const existingPermissions = safeArray(channel.permissions);
+    const deniesEveryone = existingPermissions.some((permission) => (
+      normalizeIdentifier(permission.target) === '@everyone'
+      && (safeArray(permission.deny).includes('view_channel') || safeArray(permission.deny).includes('connect'))
+    ));
+    const expectedRoleAlreadyAllowed = existingPermissions.some((permission) => (
+      normalizeIdentifier(permission.target) === expectedRole
+      && safeArray(permission.allow).length
+    ));
+
+    if (deniesEveryone && !expectedRoleAlreadyAllowed) {
+      channel.permissions = existingPermissions.concat([{
+        target: expectedRole,
+        allow: getSuggestedAllowPermissions(channel, expectedRole, contextText),
+        deny: [],
+      }]);
+      warnings.push(`Assembler inferred missing "${expectedRole}" access overwrite for channel "${channel.id || channel.key || channel.name}".`);
+    }
+
+    if (/(support|ticket)/.test(contextText) && roles.some((role) => normalizeIdentifier(role.id || role.key || role.name) === 'staff')) {
+      const staffHasAccess = safeArray(channel.permissions).some((permission) => (
+        normalizeIdentifier(permission.target) === 'staff'
+        && safeArray(permission.allow).includes('send_messages')
+      ));
+
+      if (!staffHasAccess) {
+        channel.permissions = safeArray(channel.permissions).concat([{
+          target: 'staff',
+          allow: ['view_channel', 'send_messages', 'read_message_history', 'manage_messages'],
+          deny: [],
+        }]);
+        warnings.push(`Assembler inferred missing staff support access on channel "${channel.id || channel.key || channel.name}".`);
+      }
+    }
+  });
+};
+
 const assembleTemplateLocally = ({
   architecture,
   permissions,
@@ -238,6 +355,7 @@ const assembleTemplateLocally = ({
   applyRolePermissions(roles, permissions?.rolePermissions);
   ensureCategoryAssignments(channels, categories, warnings);
   applyChannelOverwrites(channels, permissions?.channelOverwrites, normalizeRoleRefs(roles), warnings);
+  ensureInferredPrivateOverwrites(channels, categories, roles, warnings);
 
   return {
     template: {

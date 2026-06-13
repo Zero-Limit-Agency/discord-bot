@@ -686,6 +686,9 @@ const runBuildAgentPipeline = async ({ prompt, attachment, normalizedBrief = nul
         correctionNote,
       }),
       guardOutput: guardArchitectOutput,
+      guardContext: {
+        normalizedBrief,
+      },
       runDirectoryPath,
       timeoutMs: getAgentTimeoutMs('architect'),
       maxRetries,
@@ -711,6 +714,9 @@ const runBuildAgentPipeline = async ({ prompt, attachment, normalizedBrief = nul
         correctionNote,
       }),
       guardOutput: guardPermissionsOutput,
+      guardContext: {
+        architecture: architectRun.output,
+      },
       runDirectoryPath,
       timeoutMs: getAgentTimeoutMs('permissions'),
       maxRetries,

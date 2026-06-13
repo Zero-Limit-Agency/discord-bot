@@ -51,7 +51,212 @@ const filterSupportedPermissions = (permissions, warnings, pathLabel) => {
     });
 };
 
-const guardArchitectOutput = (output) => {
+const createRefLookup = (entities = []) => {
+  const lookup = new Map();
+
+  ensureArray(entities)
+    .filter(isPlainObject)
+    .forEach((entity) => {
+      const canonical = toCleanString(entity.id || entity.key || entity.name);
+
+      if (!canonical) {
+        return;
+      }
+
+      [entity.id, entity.key, entity.name]
+        .map(toCleanString)
+        .filter(Boolean)
+        .forEach((value) => lookup.set(value.toLowerCase(), canonical));
+    });
+
+  return lookup;
+};
+
+const resolveKnownRef = (value, lookup) => {
+  const normalized = toCleanString(value);
+
+  if (!normalized) {
+    return '';
+  }
+
+  return lookup.get(normalized.toLowerCase()) || normalized;
+};
+
+const ensureEntity = (collection, entity, warnings, reason) => {
+  const wanted = toCleanString(entity.id || entity.key || entity.name).toLowerCase();
+
+  if (!wanted) {
+    return;
+  }
+
+  const exists = collection.some((item) => (
+    [item?.id, item?.key, item?.name]
+      .map((value) => toCleanString(value).toLowerCase())
+      .filter(Boolean)
+      .includes(wanted)
+  ));
+
+  if (exists) {
+    return;
+  }
+
+  collection.push(entity);
+  warnings.push(reason);
+};
+
+const findCategoryId = (categories, preferredIds = []) => {
+  const loweredPreferredIds = preferredIds.map((value) => toCleanString(value).toLowerCase()).filter(Boolean);
+  const exactMatch = categories.find((category) => (
+    [category?.id, category?.key, category?.name]
+      .map((value) => toCleanString(value).toLowerCase())
+      .filter(Boolean)
+      .some((value) => loweredPreferredIds.includes(value))
+  ));
+
+  return exactMatch?.id || exactMatch?.key || categories[0]?.id || categories[0]?.key || '';
+};
+
+const applyArchitectBriefHints = (guarded, context, warnings) => {
+  const normalizedBrief = context?.normalizedBrief;
+
+  if (!normalizedBrief) {
+    return;
+  }
+
+  const requiredAreas = ensureArray(normalizedBrief.requiredAreas);
+  const rolesMentioned = ensureArray(normalizedBrief.rolesMentioned);
+  const channelsMentioned = ensureArray(normalizedBrief.channelsMentioned);
+  const supportHints = ensureArray(normalizedBrief.supportHints);
+  const originalPrompt = toCleanString(normalizedBrief.originalPrompt).toLowerCase();
+  const hasTournamentHint = /(tournoi|tournament|tryout)/.test(originalPrompt);
+
+  if (requiredAreas.includes('staff-operations') || rolesMentioned.includes('staff')) {
+    ensureEntity(guarded.roles, {
+      id: 'staff',
+      key: 'staff',
+      name: 'Staff',
+    }, warnings, 'Architect guard added missing staff role from brief hints.');
+    ensureEntity(guarded.categories, {
+      id: 'staff-operations',
+      key: 'staff-operations',
+      name: 'Staff Operations',
+    }, warnings, 'Architect guard added missing staff category from brief hints.');
+  }
+
+  if (requiredAreas.includes('team-operations') || rolesMentioned.includes('player') || normalizedBrief.serverType === 'esports') {
+    ensureEntity(guarded.roles, {
+      id: 'player',
+      key: 'player',
+      name: 'Player',
+    }, warnings, 'Architect guard added missing player role from brief hints.');
+    ensureEntity(guarded.categories, {
+      id: 'team-operations',
+      key: 'team-operations',
+      name: 'Team Operations',
+    }, warnings, 'Architect guard added missing team operations category from brief hints.');
+  }
+
+  if (requiredAreas.includes('premium-private') || rolesMentioned.includes('premium') || normalizedBrief.serverType === 'premium-community') {
+    ensureEntity(guarded.roles, {
+      id: 'premium',
+      key: 'premium',
+      name: 'Premium Member',
+    }, warnings, 'Architect guard added missing premium role from brief hints.');
+    ensureEntity(guarded.categories, {
+      id: 'premium-private',
+      key: 'premium-private',
+      name: 'Premium Private',
+    }, warnings, 'Architect guard added missing premium category from brief hints.');
+  }
+
+  if (normalizedBrief.serverType === 'content-creator') {
+    ensureEntity(guarded.roles, {
+      id: 'creator',
+      key: 'creator',
+      name: 'Creator',
+    }, warnings, 'Architect guard added missing creator role from brief hints.');
+
+    if (requiredAreas.includes('support') || requiredAreas.includes('public-community')) {
+      ensureEntity(guarded.roles, {
+        id: 'staff',
+        key: 'staff',
+        name: 'Staff',
+      }, warnings, 'Architect guard added missing staff role for managed creator community.');
+    }
+  }
+
+  if (requiredAreas.includes('onboarding') || channelsMentioned.includes('welcome')) {
+    ensureEntity(guarded.channels, {
+      id: 'welcome',
+      key: 'welcome',
+      name: 'welcome',
+      type: 'text',
+      categoryId: findCategoryId(guarded.categories, ['information', 'public-community', 'media-announcements']),
+    }, warnings, 'Architect guard added missing welcome channel from brief hints.');
+  }
+
+  if (requiredAreas.includes('support') || channelsMentioned.includes('support') || supportHints.length) {
+    ensureEntity(guarded.categories, {
+      id: 'support',
+      key: 'support',
+      name: 'Support',
+    }, warnings, 'Architect guard added missing support category from brief hints.');
+    ensureEntity(guarded.channels, {
+      id: 'support-chat',
+      key: 'support-chat',
+      name: 'support-chat',
+      type: 'text',
+      categoryId: findCategoryId(guarded.categories, ['support']),
+    }, warnings, 'Architect guard added missing support channel from brief hints.');
+  }
+
+  if (channelsMentioned.includes('media')) {
+    ensureEntity(guarded.categories, {
+      id: 'media-announcements',
+      key: 'media-announcements',
+      name: 'Media & Announcements',
+    }, warnings, 'Architect guard added missing media category from brief hints.');
+    ensureEntity(guarded.channels, {
+      id: 'media-feed',
+      key: 'media-feed',
+      name: 'media-feed',
+      type: 'text',
+      categoryId: findCategoryId(guarded.categories, ['media-announcements']),
+    }, warnings, 'Architect guard added missing media channel from brief hints.');
+  }
+
+  if (channelsMentioned.includes('announcements')) {
+    ensureEntity(guarded.channels, {
+      id: 'announcements',
+      key: 'announcements',
+      name: 'announcements',
+      type: 'announcement',
+      categoryId: findCategoryId(guarded.categories, ['public-community', 'media-announcements', 'information']),
+    }, warnings, 'Architect guard added missing announcements channel from brief hints.');
+  }
+
+  if (channelsMentioned.includes('scrims')) {
+    ensureEntity(guarded.channels, {
+      id: 'scrims',
+      key: 'scrims',
+      name: 'scrims',
+      type: 'text',
+      categoryId: findCategoryId(guarded.categories, ['team-operations']),
+    }, warnings, 'Architect guard added missing scrims channel from brief hints.');
+  }
+
+  if (hasTournamentHint) {
+    ensureEntity(guarded.channels, {
+      id: 'tournaments',
+      key: 'tournaments',
+      name: 'tournaments',
+      type: 'text',
+      categoryId: findCategoryId(guarded.categories, ['team-operations']),
+    }, warnings, 'Architect guard added missing tournaments channel from brief hints.');
+  }
+};
+
+const guardArchitectOutput = (output, context = {}) => {
   const errors = [];
   const warnings = [];
 
@@ -133,6 +338,8 @@ const guardArchitectOutput = (output) => {
       }),
   };
 
+  applyArchitectBriefHints(guarded, context, warnings);
+
   if (!guarded.name) {
     errors.push('Architect output is missing server name.');
   }
@@ -196,9 +403,114 @@ const normalizeOverwriteGroup = (entry) => {
   };
 };
 
-const guardPermissionsOutput = (output) => {
+const deriveRolePermissions = ({
+  entry,
+  roleId,
+  warnings,
+  pathLabel,
+  roleLookup,
+  channelLookup,
+}) => {
+  const rolePermissions = [];
+  const generatedOverwrites = [];
+
+  ensureArray(entry.permissions).forEach((permissionEntry, permissionIndex) => {
+    if (typeof permissionEntry === 'string') {
+      rolePermissions.push(permissionEntry);
+      return;
+    }
+
+    if (!isPlainObject(permissionEntry)) {
+      warnings.push(`${pathLabel}[${permissionIndex}] was dropped because it is not a valid permission entry.`);
+      return;
+    }
+
+    const target = resolveKnownRef(
+      permissionEntry.target
+      || permissionEntry.channelId
+      || permissionEntry.channelKey
+      || permissionEntry.channel
+      || permissionEntry.roleId
+      || permissionEntry.roleKey
+      || permissionEntry.role,
+      channelLookup,
+    );
+    const allow = filterSupportedPermissions(
+      permissionEntry.allow || permissionEntry.permissions,
+      warnings,
+      `${pathLabel}[${permissionIndex}].allow`,
+    );
+    const deny = filterSupportedPermissions(
+      permissionEntry.deny,
+      warnings,
+      `${pathLabel}[${permissionIndex}].deny`,
+    );
+    const normalizedTarget = toCleanString(target).toLowerCase();
+    const normalizedRoleId = toCleanString(roleId).toLowerCase();
+
+    if (!allow.length && !deny.length) {
+      warnings.push(`${pathLabel}[${permissionIndex}] was dropped because it had no supported permissions.`);
+      return;
+    }
+
+    if (!normalizedTarget || ['@me', '@self', '@everyone', normalizedRoleId].includes(normalizedTarget) || roleLookup.has(normalizedTarget)) {
+      rolePermissions.push(...allow);
+      warnings.push(`${pathLabel}[${permissionIndex}] object form was normalized into role permissions for "${roleId}".`);
+      return;
+    }
+
+    if (channelLookup.has(normalizedTarget)) {
+      generatedOverwrites.push({
+        channelId: channelLookup.get(normalizedTarget),
+        permissions: [
+          {
+            target: roleId,
+            allow,
+            deny,
+          },
+        ],
+      });
+      warnings.push(`${pathLabel}[${permissionIndex}] was converted into a channel overwrite for "${target}".`);
+      return;
+    }
+
+    warnings.push(`${pathLabel}[${permissionIndex}] was dropped because target "${target}" could not be resolved.`);
+  });
+
+  return {
+    rolePermissions: Array.from(new Set(rolePermissions)),
+    generatedOverwrites,
+  };
+};
+
+const mergeChannelOverwriteEntries = (entries = []) => {
+  const merged = new Map();
+
+  entries.forEach((entry) => {
+    const channelId = toCleanString(entry?.channelId);
+
+    if (!channelId) {
+      return;
+    }
+
+    if (!merged.has(channelId)) {
+      merged.set(channelId, {
+        channelId,
+        permissions: [],
+      });
+    }
+
+    merged.get(channelId).permissions.push(...ensureArray(entry.permissions));
+  });
+
+  return Array.from(merged.values());
+};
+
+const guardPermissionsOutput = (output, context = {}) => {
   const errors = [];
   const warnings = [];
+  const roleLookup = createRefLookup(context.architecture?.roles);
+  const channelLookup = createRefLookup(context.architecture?.channels);
 
   if (!isPlainObject(output)) {
     return {
@@ -209,6 +521,7 @@ const guardPermissionsOutput = (output) => {
     };
   }
 
+  const generatedOverwrites = [];
   const rolePermissions = ensureArray(output.rolePermissions)
     .map(normalizePermissionEntry)
     .map((entry, index) => {
@@ -216,34 +529,55 @@ const guardPermissionsOutput = (output) => {
         return null;
       }
 
+      const resolvedRoleId = resolveKnownRef(entry.roleId, roleLookup);
+      const derivedPermissions = deriveRolePermissions({
+        entry,
+        roleId: resolvedRoleId,
+        warnings,
+        pathLabel: `rolePermissions[${index}].permissions`,
+        roleLookup,
+        channelLookup,
+      });
+      generatedOverwrites.push(...derivedPermissions.generatedOverwrites);
+
       return {
         ...entry,
-        permissions: filterSupportedPermissions(entry.permissions, warnings, `rolePermissions[${index}].permissions`),
+        roleId: resolvedRoleId,
+        permissions: derivedPermissions.rolePermissions,
       };
     })
     .filter(Boolean);
-  const channelOverwrites = ensureArray(output.channelOverwrites)
+  const channelOverwrites = mergeChannelOverwriteEntries([
+    ...ensureArray(output.channelOverwrites)
     .map(normalizeOverwriteGroup)
     .map((entry, index) => {
       if (!entry) {
         return null;
       }
 
+      const resolvedChannelId = resolveKnownRef(entry.channelId, channelLookup);
+
       const permissions = ensureArray(entry.permissions)
         .filter(isPlainObject)
         .map((permission, permissionIndex) => ({
           ...permission,
-          target: toCleanString(permission.target || permission.roleId || permission.roleKey || permission.role) || '@everyone',
+          target: resolveKnownRef(
+            permission.target || permission.roleId || permission.roleKey || permission.role,
+            roleLookup,
+          ) || '@everyone',
           allow: filterSupportedPermissions(permission.allow, warnings, `channelOverwrites[${index}].permissions[${permissionIndex}].allow`),
           deny: filterSupportedPermissions(permission.deny, warnings, `channelOverwrites[${index}].permissions[${permissionIndex}].deny`),
         }));
 
       return {
         ...entry,
+        channelId: resolvedChannelId,
         permissions,
       };
     })
-    .filter(Boolean);
+    .filter(Boolean),
+    ...generatedOverwrites,
+  ]);
 
   rolePermissions.forEach((entry, index) => {
     if (!entry.roleId) {
