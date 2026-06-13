@@ -9,11 +9,12 @@ const buildPermissionsAgentRequest = ({ architecture, model, correctionNote = ''
         'Return exactly one valid JSON object.',
         'Do not use markdown.',
         'Do not add prose before or after the JSON.',
-        'Use supported permissions only.',
+        'Use only these supported permissions: view_channel, send_messages, manage_messages, manage_channels, connect, speak, read_message_history, mention_everyone, attach_files, embed_links.',
         'Use the principle of least privilege.',
         'Keep @everyone limited by default.',
         'Every channelOverwrites entry must point to a real channel reference.',
         'Prefer semantic role ids like staff, admin, premium, member.',
+        'Never use unsupported permissions like administrator, ban_members, kick_members, manage_roles, manage_server, manage_guild_expressions, add_reactions, use_application_commands, or view_audit_log.',
       ].join('\n'),
     },
     {

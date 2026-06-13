@@ -1,6 +1,7 @@
 const { normalizeTemplate } = require('../templateNormalizer');
 const { repairTemplate } = require('../templateRepairService');
 const { validateTemplate } = require('../discordTemplateService');
+const { supportedPermissions, supportedChannelTypes } = require('../discordTemplateMapper');
 
 const isPlainObject = (value) => Boolean(value) && typeof value === 'object' && !Array.isArray(value);
 
@@ -26,6 +27,26 @@ const slugify = (value, fallback) => {
 };
 
 const ensureArray = (value) => (Array.isArray(value) ? value : []);
+
+const normalizePermissionName = (permission) => toCleanString(permission)
+  .toLowerCase()
+  .replace(/\s+/g, '_');
+
+const filterSupportedPermissions = (permissions, warnings, pathLabel) => {
+  const supported = new Set(supportedPermissions);
+
+  return ensureArray(permissions)
+    .map(normalizePermissionName)
+    .filter(Boolean)
+    .filter((permission) => {
+      if (supported.has(permission)) {
+        return true;
+      }
+
+      warnings.push(`${pathLabel} dropped unsupported permission "${permission}".`);
+      return false;
+    });
+};
 
 const guardArchitectOutput = (output) => {
   const errors = [];
@@ -84,15 +105,18 @@ const guardArchitectOutput = (output) => {
       .map((channel, index) => {
         const name = toCleanString(channel.name);
         const id = toCleanString(channel.id || channel.key) || slugify(name, `channel-${index + 1}`);
-        const type = toCleanString(channel.type) || 'text';
+        const requestedType = toCleanString(channel.type).toLowerCase();
+        const type = supportedChannelTypes.includes(requestedType) ? requestedType : 'text';
         const categoryId = toCleanString(channel.categoryId || channel.category);
 
         if (!name) {
           errors.push(`channels[${index}] is missing name.`);
         }
 
-        if (!toCleanString(channel.type)) {
+        if (!requestedType) {
           warnings.push(`channels[${index}] defaulted missing type to "text".`);
+        } else if (!supportedChannelTypes.includes(requestedType)) {
+          warnings.push(`channels[${index}] replaced unsupported type "${requestedType}" with "text".`);
         }
 
         return {
@@ -184,9 +208,38 @@ const guardPermissionsOutput = (output) => {
 
   const rolePermissions = ensureArray(output.rolePermissions)
     .map(normalizePermissionEntry)
+    .map((entry, index) => {
+      if (!entry) {
+        return null;
+      }
+
+      return {
+        ...entry,
+        permissions: filterSupportedPermissions(entry.permissions, warnings, `rolePermissions[${index}].permissions`),
+      };
+    })
     .filter(Boolean);
   const channelOverwrites = ensureArray(output.channelOverwrites)
     .map(normalizeOverwriteGroup)
+    .map((entry, index) => {
+      if (!entry) {
+        return null;
+      }
+
+      const permissions = ensureArray(entry.permissions)
+        .filter(isPlainObject)
+        .map((permission, permissionIndex) => ({
+          ...permission,
+          target: toCleanString(permission.target || permission.roleId || permission.roleKey || permission.role) || '@everyone',
+          allow: filterSupportedPermissions(permission.allow, warnings, `channelOverwrites[${index}].permissions[${permissionIndex}].allow`),
+          deny: filterSupportedPermissions(permission.deny, warnings, `channelOverwrites[${index}].permissions[${permissionIndex}].deny`),
+        }));
+
+      return {
+        ...entry,
+        permissions,
+      };
+    })
     .filter(Boolean);
 
   rolePermissions.forEach((entry, index) => {
