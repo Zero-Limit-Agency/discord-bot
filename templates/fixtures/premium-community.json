@@ -1,0 +1,37 @@
+{
+  "name": "Premium Community",
+  "description": "Community server with VIP access.",
+  "roles": [
+    { "id": "staff", "key": "staff", "name": "Staff" },
+    { "id": "premium", "key": "premium", "name": "Premium" }
+  ],
+  "categories": [
+    { "id": "public", "key": "public", "name": "Public" },
+    { "id": "premium", "key": "premium", "name": "Premium" }
+  ],
+  "channels": [
+    {
+      "id": "welcome",
+      "key": "welcome",
+      "name": "welcome",
+      "type": "text",
+      "categoryId": "public",
+      "permissions": [
+        { "target": "@everyone", "allow": ["view_channel"], "deny": ["send_messages"] }
+      ]
+    },
+    {
+      "id": "vip-lounge",
+      "key": "vip-lounge",
+      "name": "vip-lounge",
+      "type": "voice",
+      "categoryId": "premium",
+      "permissions": [
+        { "target": "premium", "allow": ["view_channel", "connect", "speak"], "deny": [] }
+      ]
+    }
+  ],
+  "welcomeEmbeds": [
+    { "title": "Welcome", "description": "Join the public chats and unlock VIP when applicable." }
+  ]
+}

@@ -45,6 +45,17 @@ const config = {
   lmStudioModel: process.env.LMSTUDIO_MODEL || '',
   lmStudioEnabled: String(process.env.LMSTUDIO_ENABLED || 'false').toLowerCase() === 'true',
   lmStudioTimeoutMs: Number.parseInt(process.env.LMSTUDIO_TIMEOUT_MS || '180000', 10),
+  buildPipelineMode: String(process.env.BUILD_PIPELINE_MODE || 'single').trim().toLowerCase(),
+  buildAgentTimeoutMs: Number.parseInt(process.env.BUILD_AGENT_TIMEOUT_MS || '900000', 10),
+  buildArchitectTimeoutMs: Number.parseInt(process.env.BUILD_ARCHITECT_TIMEOUT_MS || '', 10),
+  buildPermissionsTimeoutMs: Number.parseInt(process.env.BUILD_PERMISSIONS_TIMEOUT_MS || '', 10),
+  buildContentTimeoutMs: Number.parseInt(process.env.BUILD_CONTENT_TIMEOUT_MS || '', 10),
+  buildAssemblerTimeoutMs: Number.parseInt(process.env.BUILD_ASSEMBLER_TIMEOUT_MS || '', 10),
+  buildAgentMaxRetries: Number.parseInt(process.env.BUILD_AGENT_MAX_RETRIES || '1', 10),
+  aiSkillsEnabled: String(process.env.AI_SKILLS_ENABLED || 'true').toLowerCase() === 'true',
+  aiSkillsMaxChars: Number.parseInt(process.env.AI_SKILLS_MAX_CHARS || '12000', 10),
+  aiSkillsMode: String(process.env.AI_SKILLS_MODE || 'compact').trim().toLowerCase(),
+  discordTemplateExecutionEnabled: String(process.env.DISCORD_TEMPLATE_EXECUTION_ENABLED || 'false').toLowerCase() === 'true',
   attachmentTextMaxBytes: Number.parseInt(process.env.ATTACHMENT_TEXT_MAX_BYTES || '1048576', 10),
   attachmentFetchTimeoutMs: Number.parseInt(process.env.ATTACHMENT_FETCH_TIMEOUT_MS || '10000', 10),
   staffRoleIds: (process.env.STAFF_ROLE_IDS || '')
@@ -74,6 +85,42 @@ if (!Number.isFinite(config.attachmentTextMaxBytes) || config.attachmentTextMaxB
 
 if (!Number.isFinite(config.lmStudioTimeoutMs) || config.lmStudioTimeoutMs <= 0) {
   config.lmStudioTimeoutMs = 180000;
+}
+
+if (!['single', 'multi'].includes(config.buildPipelineMode)) {
+  config.buildPipelineMode = 'single';
+}
+
+if (!Number.isFinite(config.buildAgentTimeoutMs) || config.buildAgentTimeoutMs <= 0) {
+  config.buildAgentTimeoutMs = 900000;
+}
+
+if (!Number.isFinite(config.buildArchitectTimeoutMs) || config.buildArchitectTimeoutMs <= 0) {
+  config.buildArchitectTimeoutMs = config.buildAgentTimeoutMs;
+}
+
+if (!Number.isFinite(config.buildPermissionsTimeoutMs) || config.buildPermissionsTimeoutMs <= 0) {
+  config.buildPermissionsTimeoutMs = config.buildAgentTimeoutMs;
+}
+
+if (!Number.isFinite(config.buildContentTimeoutMs) || config.buildContentTimeoutMs <= 0) {
+  config.buildContentTimeoutMs = config.buildAgentTimeoutMs;
+}
+
+if (!Number.isFinite(config.buildAssemblerTimeoutMs) || config.buildAssemblerTimeoutMs <= 0) {
+  config.buildAssemblerTimeoutMs = config.buildAgentTimeoutMs;
+}
+
+if (!Number.isFinite(config.buildAgentMaxRetries) || config.buildAgentMaxRetries < 0) {
+  config.buildAgentMaxRetries = 1;
+}
+
+if (!Number.isFinite(config.aiSkillsMaxChars) || config.aiSkillsMaxChars <= 0) {
+  config.aiSkillsMaxChars = 12000;
+}
+
+if (!['off', 'minimal', 'compact', 'full'].includes(config.aiSkillsMode)) {
+  config.aiSkillsMode = 'compact';
 }
 
 if (!Number.isFinite(config.attachmentFetchTimeoutMs) || config.attachmentFetchTimeoutMs <= 0) {

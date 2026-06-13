@@ -6,7 +6,8 @@
   "scripts": {
     "start": "node src/index.js",
     "dev": "node --watch src/index.js",
-    "register-commands": "node src/registerCommands.js"
+    "register-commands": "node src/registerCommands.js",
+    "verify-template-fixtures": "node scripts/verifyTemplateFixtures.js"
   },
   "keywords": [
     "discord",

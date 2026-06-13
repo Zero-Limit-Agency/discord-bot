@@ -3,13 +3,19 @@ const path = require('node:path');
 const config = require('../config');
 const logger = require('../utils/logger');
 const discordTemplateSystemPrompt = require('../prompts/discordTemplateSystemPrompt');
+const { loadAiSkillsBlock } = require('./aiSkillLoader');
 
 const debugDirectoryPath = path.join(process.cwd(), 'debug', 'build-requests');
+const finalPromptDebugDirectoryPath = path.join(process.cwd(), 'debug', 'build-final-prompts');
 
 const isProduction = () => process.env.NODE_ENV === 'production';
 
 const ensureDebugDirectory = () => {
   fs.mkdirSync(debugDirectoryPath, { recursive: true });
+};
+
+const ensureFinalPromptDebugDirectory = () => {
+  fs.mkdirSync(finalPromptDebugDirectoryPath, { recursive: true });
 };
 
 const writeDebugRequest = (request) => {
@@ -22,6 +28,25 @@ const writeDebugRequest = (request) => {
   const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
   const filePath = path.join(debugDirectoryPath, `build-request-${timestamp}.json`);
   fs.writeFileSync(filePath, JSON.stringify(request, null, 2));
+  return filePath;
+};
+
+const writeFinalPromptDebugFile = (messages, metadata) => {
+  if (isProduction()) {
+    return null;
+  }
+
+  ensureFinalPromptDebugDirectory();
+
+  const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+  const filePath = path.join(finalPromptDebugDirectoryPath, `build-final-prompt-${timestamp}.txt`);
+  const content = [
+    '[METADATA]',
+    JSON.stringify(metadata, null, 2),
+    '',
+    ...messages.map((message) => `[${message.role.toUpperCase()}]\n${message.content}`),
+  ].join('\n\n');
+  fs.writeFileSync(filePath, content, 'utf8');
   return filePath;
 };
 
@@ -60,6 +85,14 @@ const buildLmStudioRequest = ({ prompt, attachment, requestedBy }) => {
   }
 
   const userContent = [];
+  const promptContext = [
+    normalizedPrompt,
+    normalizedAttachment?.filename || '',
+    normalizedAttachment?.text || '',
+  ].filter(Boolean).join('\n\n');
+  const skillsBlock = loadAiSkillsBlock({
+    promptContext,
+  });
 
   if (normalizedPrompt) {
     userContent.push(`Prompt:\n${normalizedPrompt}`);
@@ -79,6 +112,30 @@ const buildLmStudioRequest = ({ prompt, attachment, requestedBy }) => {
     }
   }
 
+  const messages = [
+    {
+      role: 'system',
+      content: discordTemplateSystemPrompt,
+    },
+  ];
+
+  if (config.aiSkillsEnabled && skillsBlock.enabled && skillsBlock.content) {
+    messages.push({
+      role: 'system',
+      content: [
+        'Use the following local Discord architecture skills and doctrine as contextual guidance.',
+        'Apply them intelligently to incomplete briefs.',
+        'Prefer coherent, professional, modern Discord structures.',
+        skillsBlock.content,
+      ].join('\n\n'),
+    });
+  }
+
+  messages.push({
+    role: 'user',
+    content: userContent.join('\n\n'),
+  });
+
   const request = {
     target: {
       provider: 'lm-studio',
@@ -96,27 +153,31 @@ const buildLmStudioRequest = ({ prompt, attachment, requestedBy }) => {
     },
     requestPayload: {
       model: config.lmStudioModel || 'MODEL_NOT_CONFIGURED',
-      messages: [
-        {
-          role: 'system',
-          content: discordTemplateSystemPrompt,
-        },
-        {
-          role: 'user',
-          content: userContent.join('\n\n'),
-        },
-      ],
+      messages,
       temperature: 0.2,
     },
   };
 
   const debugFilePath = writeDebugRequest(request);
+  const finalPromptDebugFilePath = writeFinalPromptDebugFile(messages, {
+    skillsEnabled: config.aiSkillsEnabled && skillsBlock.enabled,
+    skillsMode: skillsBlock.mode,
+    skillsLoaded: skillsBlock.skillFiles.length,
+    skillsChars: skillsBlock.chars,
+    selectedSkills: skillsBlock.selectedSkills,
+    truncated: skillsBlock.truncated,
+    maxChars: skillsBlock.maxChars,
+  });
 
   logger.info('LM Studio build request prepared', {
     hasPrompt: Boolean(normalizedPrompt),
     hasAttachment: Boolean(normalizedAttachment),
     modelConfigured: Boolean(config.lmStudioModel),
     debugFile: Boolean(debugFilePath),
+    skillsLoaded: skillsBlock.skillFiles.length,
+    skillsChars: skillsBlock.chars,
+    skillsMode: skillsBlock.mode,
+    finalPromptDebugFile: Boolean(finalPromptDebugFilePath),
   });
 
   return {
@@ -124,6 +185,15 @@ const buildLmStudioRequest = ({ prompt, attachment, requestedBy }) => {
     request,
     attachmentWarnings: normalizedAttachment ? normalizedAttachment.warnings : [],
     debugFilePath,
+    finalPromptDebugFilePath,
+    skillsMeta: {
+      skillsEnabled: config.aiSkillsEnabled && skillsBlock.enabled,
+      skillsMode: skillsBlock.mode,
+      skillsLoaded: skillsBlock.skillFiles.length,
+      skillsChars: skillsBlock.chars,
+      selectedSkills: skillsBlock.selectedSkills,
+      truncated: skillsBlock.truncated,
+    },
   };
 };
 

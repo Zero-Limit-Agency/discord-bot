@@ -11,3 +11,6 @@ debug/lmstudio-raw-responses/
 debug/build-normalized-templates/
 debug/build-repaired-templates/
 debug/build-reports/
+debug/live-runs/
+debug/build-final-prompts/
+debug/build-agents/

@@ -1,0 +1,37 @@
+{
+  "name": "Content Creator Hub",
+  "description": "Creator workflow and media collaboration.",
+  "roles": [
+    { "id": "staff", "key": "staff", "name": "Staff" },
+    { "id": "creators", "key": "creators", "name": "Creators" }
+  ],
+  "categories": [
+    { "id": "information", "key": "information", "name": "Information" },
+    { "id": "content", "key": "content", "name": "Content" }
+  ],
+  "channels": [
+    {
+      "id": "announcements",
+      "key": "announcements",
+      "name": "announcements",
+      "type": "announcement",
+      "categoryId": "information",
+      "permissions": [
+        { "target": "@everyone", "allow": ["view_channel"], "deny": ["send_messages"] }
+      ]
+    },
+    {
+      "id": "media-drops",
+      "key": "media-drops",
+      "name": "media-drops",
+      "type": "text",
+      "categoryId": "content",
+      "permissions": [
+        { "target": "creators", "allow": ["view_channel", "send_messages", "attach_files", "embed_links"], "deny": [] }
+      ]
+    }
+  ],
+  "welcomeEmbeds": [
+    { "title": "Creator Welcome", "description": "Use the content category for drafts and media reviews." }
+  ]
+}

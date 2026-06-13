@@ -1,0 +1,37 @@
+{
+  "name": "Esport Simple",
+  "description": "Simple esports team server.",
+  "roles": [
+    { "id": "staff", "key": "staff", "name": "Staff" },
+    { "id": "players", "key": "players", "name": "Players" }
+  ],
+  "categories": [
+    { "id": "information", "key": "information", "name": "Information" },
+    { "id": "team", "key": "team", "name": "Team" }
+  ],
+  "channels": [
+    {
+      "id": "welcome",
+      "key": "welcome",
+      "name": "welcome",
+      "type": "text",
+      "categoryId": "information",
+      "permissions": [
+        { "target": "@everyone", "allow": ["view_channel"], "deny": ["send_messages"] }
+      ]
+    },
+    {
+      "id": "scrims",
+      "key": "scrims",
+      "name": "scrims",
+      "type": "text",
+      "categoryId": "team",
+      "permissions": [
+        { "target": "players", "allow": ["view_channel", "send_messages"], "deny": [] }
+      ]
+    }
+  ],
+  "welcomeEmbeds": [
+    { "title": "Welcome", "description": "Read the rules and start here." }
+  ]
+}

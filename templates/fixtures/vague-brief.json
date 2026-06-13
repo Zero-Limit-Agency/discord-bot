@@ -1,0 +1,25 @@
+{
+  "name": "Community Hub",
+  "description": "",
+  "roles": [
+    { "id": "staff", "key": "staff", "name": "Staff" }
+  ],
+  "categories": [
+    { "id": "start-here", "key": "start-here", "name": "Start Here" }
+  ],
+  "channels": [
+    {
+      "id": "welcome",
+      "key": "welcome",
+      "name": "welcome",
+      "type": "text",
+      "categoryId": "start-here",
+      "permissions": [
+        { "target": "@everyone", "allow": ["view_channel"], "deny": ["send_messages"] }
+      ]
+    }
+  ],
+  "welcomeEmbeds": [
+    { "title": "Welcome", "description": "Start with the information channels and introduce yourself." }
+  ]
+}

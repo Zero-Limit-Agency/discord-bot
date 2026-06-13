@@ -8,10 +8,13 @@ const extractContentFromResponse = (payload) => {
   return typeof content === 'string' ? content : '';
 };
 
-const callLmStudio = async (requestPayload) => {
+const callLmStudio = async (requestPayload, options = {}) => {
   const startedAt = Date.now();
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), config.lmStudioTimeoutMs);
+  const timeoutMs = Number.isFinite(options.timeoutMs) && options.timeoutMs > 0
+    ? options.timeoutMs
+    : config.lmStudioTimeoutMs;
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
 
   try {
     const response = await fetch(`${config.lmStudioBaseUrl}/v1/chat/completions`, {
