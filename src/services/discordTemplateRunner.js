@@ -4,24 +4,25 @@ const logger = require('../utils/logger');
 const { buildExecutionPlan } = require('./discordServerOrchestrator');
 const mockAdapter = require('./executionAdapters/mockDiscordExecutionAdapter');
 
-const debugDirectoryPath = path.join(process.cwd(), 'debug', 'dry-runs');
+const dryRunDebugDirectoryPath = path.join(process.cwd(), 'debug', 'dry-runs');
+const liveRunDebugDirectoryPath = path.join(process.cwd(), 'debug', 'live-runs');
 
 const isProduction = () => process.env.NODE_ENV === 'production';
 
-const ensureDebugDirectory = () => {
-  fs.mkdirSync(debugDirectoryPath, { recursive: true });
+const ensureDebugDirectory = (directoryPath) => {
+  fs.mkdirSync(directoryPath, { recursive: true });
 };
 
-const writeDebugDryRun = (slug, dryRun) => {
+const writeDebugRun = (directoryPath, slug, runLog) => {
   if (isProduction()) {
     return null;
   }
 
-  ensureDebugDirectory();
+  ensureDebugDirectory(directoryPath);
 
   const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
-  const filePath = path.join(debugDirectoryPath, `${slug}-${timestamp}.json`);
-  fs.writeFileSync(filePath, JSON.stringify(dryRun, null, 2));
+  const filePath = path.join(directoryPath, `${slug}-${timestamp}.json`);
+  fs.writeFileSync(filePath, JSON.stringify(runLog, null, 2));
   return filePath;
 };
 
@@ -62,6 +63,9 @@ const executeStepWithAdapter = async (step, adapter, runtimeRefs) => {
       return adapter.createChannel({
         templateRef: step.templateRef,
         payload: step.payload,
+        resolvedParentId: step.payload.parent
+          ? runtimeRefs[`FUTURE_CATEGORY_${step.payload.parent}`] || null
+          : null,
       });
     case 'apply_channel_overwrite':
       return adapter.applyPermissionOverwrite({
@@ -90,21 +94,75 @@ const executeStepWithAdapter = async (step, adapter, runtimeRefs) => {
 };
 
 const registerRuntimeOutput = (step, adapterResult, runtimeRefs) => {
-  if (step.outputPlaceholder && adapterResult.simulatedId) {
-    runtimeRefs[step.outputPlaceholder] = adapterResult.simulatedId;
+  const outputId = adapterResult.runtimeId || adapterResult.simulatedId || null;
+
+  if (step.outputPlaceholder && outputId) {
+    runtimeRefs[step.outputPlaceholder] = outputId;
   }
 };
 
-const executeDryRun = async (slug, adapter = mockAdapter) => {
+const createRunLog = (executionPlanResult, phaseLogs, runtimeRefs) => {
+  const allStepLogs = phaseLogs.flatMap((phase) => phase.steps);
+  const successCount = allStepLogs.filter((step) => step.status === 'success').length;
+  const skippedCount = allStepLogs.filter((step) => step.status === 'skipped').length;
+  const blockedCount = allStepLogs.filter((step) => step.status === 'blocked').length;
+  const failedCount = allStepLogs.filter((step) => step.status === 'failed').length;
+
+  let finalStatus = 'success';
+
+  if (failedCount > 0 || blockedCount > 0) {
+    finalStatus = successCount > 0 ? 'partial' : 'blocked';
+  }
+
+  return {
+    templateName: executionPlanResult.template.name,
+    slug: executionPlanResult.slug,
+    finalStatus,
+    summary: {
+      totalSteps: allStepLogs.length,
+      successCount,
+      skippedCount,
+      blockedCount,
+      failedCount,
+      phaseCount: phaseLogs.length,
+    },
+    runtimeRefs,
+    phases: phaseLogs,
+    blockingErrors: executionPlanResult.plan.blockingErrors,
+    warnings: executionPlanResult.plan.warnings,
+  };
+};
+
+const executeTemplateRun = async (slug, adapter, options = {}) => {
   const executionPlanResult = buildExecutionPlan(slug);
 
   if (!executionPlanResult.ok) {
     return executionPlanResult;
   }
 
+  if (executionPlanResult.plan.status !== 'ready') {
+    logger.warn('Discord template run blocked before execution', {
+      template: executionPlanResult.slug,
+      blockingErrors: executionPlanResult.plan.blockingErrors.length,
+      warnings: executionPlanResult.plan.warnings.length,
+      mode: options.mode || 'unknown',
+    });
+
+    return {
+      ok: false,
+      code: 'EXECUTION_PLAN_BLOCKED',
+      message: 'Execution plan is blocked.',
+      errors: executionPlanResult.plan.blockingErrors,
+      warnings: executionPlanResult.plan.warnings,
+      slug: executionPlanResult.slug,
+      template: executionPlanResult.template,
+      plan: executionPlanResult.plan,
+      debugFilePath: executionPlanResult.debugFilePath || null,
+    };
+  }
+
   const runtimeRefs = {};
   const phaseLogs = [];
-  const allStepLogs = [];
 
   for (const phase of executionPlanResult.plan.phases) {
     const stepLogs = [];
@@ -183,47 +241,19 @@ const executeDryRun = async (slug, adapter = mockAdapter) => {
       label: phase.label,
       steps: stepLogs,
     });
-    allStepLogs.push(...stepLogs);
   }
 
-  const successCount = allStepLogs.filter((step) => step.status === 'success').length;
-  const skippedCount = allStepLogs.filter((step) => step.status === 'skipped').length;
-  const blockedCount = allStepLogs.filter((step) => step.status === 'blocked').length;
-  const failedCount = allStepLogs.filter((step) => step.status === 'failed').length;
+  const runLog = createRunLog(executionPlanResult, phaseLogs, runtimeRefs);
+  const debugFilePath = writeDebugRun(options.debugDirectoryPath, executionPlanResult.slug, runLog);
 
-  let finalStatus = 'success';
-
-  if (failedCount > 0 || blockedCount > 0) {
-    finalStatus = successCount > 0 ? 'partial' : 'blocked';
-  }
-
-  const dryRun = {
-    templateName: executionPlanResult.template.name,
-    slug: executionPlanResult.slug,
-    finalStatus,
-    summary: {
-      totalSteps: allStepLogs.length,
-      successCount,
-      skippedCount,
-      blockedCount,
-      failedCount,
-      phaseCount: phaseLogs.length,
-    },
-    runtimeRefs,
-    phases: phaseLogs,
-    blockingErrors: executionPlanResult.plan.blockingErrors,
-    warnings: executionPlanResult.plan.warnings,
-  };
-
-  const debugFilePath = writeDebugDryRun(executionPlanResult.slug, dryRun);
-
-  logger.info('Discord template dry run completed', {
+  logger.info('Discord template run completed', {
     template: executionPlanResult.slug,
-    finalStatus,
-    totalSteps: dryRun.summary.totalSteps,
-    success: successCount,
-    blocked: blockedCount,
-    failed: failedCount,
+    mode: options.mode || 'unknown',
+    finalStatus: runLog.finalStatus,
+    totalSteps: runLog.summary.totalSteps,
+    success: runLog.summary.successCount,
+    blocked: runLog.summary.blockedCount,
+    failed: runLog.summary.failedCount,
     debugFile: Boolean(debugFilePath),
   });
 
@@ -232,11 +262,52 @@ const executeDryRun = async (slug, adapter = mockAdapter) => {
     slug: executionPlanResult.slug,
     template: executionPlanResult.template,
     plan: executionPlanResult.plan,
-    dryRun,
+    run: runLog,
     debugFilePath,
+  };
+};
+
+const executeDryRun = async (slug, adapter = mockAdapter) => {
+  const result = await executeTemplateRun(slug, adapter, {
+    mode: 'dry-run',
+    debugDirectoryPath: dryRunDebugDirectoryPath,
+  });
+
+  if (!result.ok) {
+    return result;
+  }
+
+  return {
+    ok: true,
+    slug: result.slug,
+    template: result.template,
+    plan: result.plan,
+    dryRun: result.run,
+    debugFilePath: result.debugFilePath,
+  };
+};
+
+const executeLiveRun = async (slug, adapter) => {
+  const result = await executeTemplateRun(slug, adapter, {
+    mode: 'live-run',
+    debugDirectoryPath: liveRunDebugDirectoryPath,
+  });
+
+  if (!result.ok) {
+    return result;
+  }
+
+  return {
+    ok: true,
+    slug: result.slug,
+    template: result.template,
+    plan: result.plan,
+    liveRun: result.run,
+    debugFilePath: result.debugFilePath,
   };
 };
 
 module.exports = {
   executeDryRun,
+  executeLiveRun,
 };

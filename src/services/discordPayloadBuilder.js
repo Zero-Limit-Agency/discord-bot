@@ -204,7 +204,12 @@ const buildDiscordPayloads = (slug) => {
     };
   }
 
-  const warnings = [...loaded.validation.warnings, ...mapping.warnings];
+  const warnings = [
+    ...(loaded.normalizationWarnings || []),
+    ...(loaded.repairWarnings || []),
+    ...loaded.validation.warnings,
+    ...mapping.warnings,
+  ];
   const errors = [];
 
   const rolePayloads = loaded.template.roles.map((role, index) => buildRolePayload(role, index, warnings, errors));

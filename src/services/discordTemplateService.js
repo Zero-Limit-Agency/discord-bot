@@ -1,6 +1,8 @@
 const fs = require('node:fs');
 const path = require('node:path');
 const logger = require('../utils/logger');
+const { normalizeTemplate } = require('./templateNormalizer');
+const { repairTemplate } = require('./templateRepairService');
 const {
   draftTemplatesDirectoryPath,
   officialTemplatesDirectoryPath,
@@ -18,14 +20,6 @@ const templateSearchDirectories = [
     directoryPath: draftTemplatesDirectoryPath,
   },
 ];
-
-const templateDefaults = {
-  description: '',
-  roles: [],
-  categories: [],
-  channels: [],
-  welcomeEmbeds: [],
-};
 
 const isPlainObject = (value) => Boolean(value) && typeof value === 'object' && !Array.isArray(value);
 const isNonEmptyString = (value) => typeof value === 'string' && value.trim().length > 0;
@@ -423,17 +417,37 @@ const loadTemplate = (slug) => {
   try {
     const raw = fs.readFileSync(templatePath, 'utf8');
     const parsed = JSON.parse(raw);
-    const template = {
-      ...templateDefaults,
-      ...parsed,
-    };
+    const normalized = normalizeTemplate(parsed);
+
+    if (!normalized.ok) {
+      return {
+        ok: false,
+        code: normalized.code || 'TEMPLATE_NORMALIZATION_ERROR',
+        message: normalized.message || 'Template could not be normalized.',
+        errors: [normalized.message || 'Template normalization failed.'],
+        warnings: normalized.normalizationWarnings || [],
+      };
+    }
+
+    const repaired = repairTemplate(normalized.normalizedTemplate);
+    const template = repaired.ok ? repaired.repairedTemplate : normalized.normalizedTemplate;
+    const pipelineWarnings = [
+      ...(normalized.normalizationWarnings || []),
+      ...(repaired.repairWarnings || []),
+    ];
+
+    if (!repaired.ok) {
+      pipelineWarnings.push(repaired.message || 'Template repair failed and validation continued with normalized data.');
+    }
+
     const validation = validateTemplate(template);
+    const mergedWarnings = [...pipelineWarnings, ...validation.warnings];
 
     if (!validation.isValid) {
       logger.warn('Discord template validation failed', {
         template: normalizedSlug,
         errors: validation.errors.length,
-        warnings: validation.warnings.length,
+        warnings: mergedWarnings.length,
       });
 
       return {
@@ -441,7 +455,7 @@ const loadTemplate = (slug) => {
         code: 'INVALID_TEMPLATE',
         message: 'Template JSON is invalid.',
         errors: validation.errors,
-        warnings: validation.warnings,
+        warnings: mergedWarnings,
       };
     }
 
@@ -451,7 +465,12 @@ const loadTemplate = (slug) => {
       source: matchingDirectory.source,
       path: templatePath,
       template,
-      validation,
+      validation: {
+        ...validation,
+        warnings: mergedWarnings,
+      },
+      normalizationWarnings: normalized.normalizationWarnings || [],
+      repairWarnings: repaired.repairWarnings || [],
     };
   } catch (error) {
     logger.error('Failed to load Discord template', {

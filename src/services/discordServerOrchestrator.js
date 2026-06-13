@@ -11,6 +11,8 @@ const ensureDebugDirectory = () => {
   fs.mkdirSync(debugDirectoryPath, { recursive: true });
 };
 
+const textCapableChannelTypes = new Set([0, 5]);
+
 const createPlaceholderMaps = (payloads) => ({
   rolePlaceholders: Object.fromEntries(
     payloads.roles.map((role) => [role.templateRoleId, `FUTURE_ROLE_${role.templateRoleId}`]),
@@ -34,6 +36,34 @@ const writeDebugPlan = (slug, plan) => {
   const filePath = path.join(debugDirectoryPath, `${slug}-${timestamp}.json`);
   fs.writeFileSync(filePath, JSON.stringify(plan, null, 2));
   return filePath;
+};
+
+const resolveOnboardingChannelRef = (template, payloads, warnings, errors) => {
+  const compatibleChannels = payloads.channels.filter((channel) => (
+    textCapableChannelTypes.has(channel.discordPayload.type)
+  ));
+
+  if (template.onboardingChannelId) {
+    const explicitChannel = payloads.channels.find((channel) => channel.templateChannelId === template.onboardingChannelId);
+
+    if (!explicitChannel) {
+      warnings.push(`Onboarding channel "${template.onboardingChannelId}" is not defined in channels. Falling back to the first text-capable channel when available.`);
+    } else if (!textCapableChannelTypes.has(explicitChannel.discordPayload.type)) {
+      warnings.push(`Onboarding channel "${template.onboardingChannelId}" is not text-capable. Falling back to the first text-capable channel when available.`);
+    } else {
+      return explicitChannel.templateChannelId;
+    }
+  }
+
+  if (compatibleChannels.length > 0) {
+    return compatibleChannels[0].templateChannelId;
+  }
+
+  if (payloads.embeds.length > 0) {
+    errors.push('Onboarding embeds require at least one text or announcement channel.');
+  }
+
+  return null;
 };
 
 const buildExecutionPlan = (slug) => {
@@ -101,15 +131,16 @@ const buildExecutionPlan = (slug) => {
       if (roleRef && roleRef !== '@everyone') {
         const rolePlaceholder = placeholders.rolePlaceholders[roleRef];
 
-        if (rolePlaceholder) {
-          dependsOn.push(rolePlaceholder);
-          dependencies.push(`Overwrite on ${channel.templateChannelId} depends on role ${roleRef}.`);
-        } else {
-          warnings.push(`Overwrite on channel "${channel.templateChannelId}" references unresolved role "${roleRef}".`);
-        }
+      if (rolePlaceholder) {
+        dependsOn.push(rolePlaceholder);
+        dependencies.push(`Overwrite on ${channel.templateChannelId} depends on role ${roleRef}.`);
+      } else {
+        warnings.push(`Overwrite on channel "${channel.templateChannelId}" references unresolved role "${roleRef}".`);
+        return;
       }
+    }
 
-      phase4Steps.push({
+    phase4Steps.push({
         stepId: `overwrite-${channelIndex + 1}-${overwriteIndex + 1}`,
         action: 'apply_channel_overwrite',
         targetChannelRef: channel.templateChannelId,
@@ -120,25 +151,29 @@ const buildExecutionPlan = (slug) => {
     });
   });
 
+  const defaultOnboardingChannelRef = resolveOnboardingChannelRef(template, payloads, warnings, errors);
+
   const phase5Steps = payloads.embeds.map((embed, index) => ({
     stepId: `onboarding-embed-${index + 1}`,
     action: 'publish_onboarding_embed',
-    targetChannelRef: template.onboardingChannelId || null,
+    targetChannelRef: defaultOnboardingChannelRef,
     payload: embed.discordPayload,
     dependsOn: [],
   }));
 
-  if (template.onboardingChannelId) {
+  if (defaultOnboardingChannelRef) {
     phase5Steps.forEach((step) => {
-      const channelPlaceholder = placeholders.channelPlaceholders[template.onboardingChannelId];
+      const channelPlaceholder = placeholders.channelPlaceholders[defaultOnboardingChannelRef];
 
       if (channelPlaceholder) {
         step.dependsOn.push(channelPlaceholder);
-        dependencies.push(`Onboarding embed depends on channel ${template.onboardingChannelId}.`);
+        dependencies.push(`Onboarding embed depends on channel ${defaultOnboardingChannelRef}.`);
       } else {
-        warnings.push(`Onboarding embed target channel "${template.onboardingChannelId}" is not defined in channels.`);
+        warnings.push(`Onboarding embed target channel "${defaultOnboardingChannelRef}" is not defined in channels.`);
       }
     });
+  } else if (phase5Steps.length > 0) {
+    phase5Steps.length = 0;
   }
 
   const phases = [
