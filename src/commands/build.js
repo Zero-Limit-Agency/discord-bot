@@ -333,6 +333,13 @@ const safeEmbedField = (name, value, inline = false) => ({
   inline: Boolean(inline),
 });
 
+const safeLimitedEmbedField = (name, value, inline = false, maxLength = 700) => {
+  const normalizedValue = safeFieldValue(value, 'N/A');
+  const truncated = truncateFieldValue(normalizedValue, maxLength);
+
+  return safeEmbedField(name, truncated.value, inline);
+};
+
 const asBulletList = (items, fallback, limit = 6) => {
   if (!items.length) {
     return fallback;
@@ -479,53 +486,38 @@ const summarizeAgentStatuses = (agentRuns) => {
   }
 
   return agentRuns
+    .slice(0, 4)
     .map((agentRun) => `${agentRun.agent || agentRun.agentName || 'unknown'}:${agentRun.status || 'unknown'}`)
-    .join('\n');
-};
-
-const summarizeAgentDurations = (agentRuns) => {
-  if (!Array.isArray(agentRuns) || !agentRuns.length) {
-    return 'N/A';
-  }
-
-  return agentRuns
-    .map((agentRun) => `${agentRun.agent || agentRun.agentName || 'unknown'}:${safeNumberLabel(agentRun.durationMs, 'N/A')}ms`)
-    .join('\n');
-};
-
-const summarizeAgentTimeouts = (agentRuns) => {
-  if (!Array.isArray(agentRuns) || !agentRuns.length) {
-    return 'N/A';
-  }
-
-  return agentRuns
-    .map((agentRun) => `${agentRun.agent || agentRun.agentName || 'unknown'}:${safeNumberLabel(agentRun.timeoutMs, 'N/A')}ms`)
-    .join('\n');
+    .join(' | ');
 };
 
 const summarizeAgentRetries = (agentRuns) => {
   if (!Array.isArray(agentRuns) || !agentRuns.length) {
-    return 'N/A';
+    return 'None';
   }
 
-  return agentRuns
-    .map((agentRun) => `${agentRun.agent || agentRun.agentName || 'unknown'}:${safeNumberLabel(agentRun.retriesUsed, '0')}`)
-    .join('\n');
+  const retriedAgents = agentRuns
+    .filter((agentRun) => safeCount(agentRun.retriesUsed, 0) > 0)
+    .slice(0, 4)
+    .map((agentRun) => `${agentRun.agent || agentRun.agentName || 'unknown'}:${safeNumberLabel(agentRun.retriesUsed, '0')}`);
+
+  return retriedAgents.length ? retriedAgents.join(' | ') : 'None';
 };
 
 const summarizeAgentRepairs = (agentRuns) => {
   if (!Array.isArray(agentRuns) || !agentRuns.length) {
-    return 'N/A';
+    return 'None';
   }
 
   const repairedAgents = agentRuns
     .filter((agentRun) => (agentRun.retriesUsed || 0) > 0 || (agentRun.agentWarnings || []).length > 0 || (agentRun.guardWarnings || []).length > 0)
+    .slice(0, 4)
     .map((agentRun) => {
       const warningCount = (agentRun.agentWarnings || []).length + (agentRun.guardWarnings || []).length;
       return `${agentRun.agent || agentRun.agentName || 'unknown'}: retries=${safeNumberLabel(agentRun.retriesUsed, '0')}, warnings=${warningCount}`;
     });
 
-  return repairedAgents.length ? repairedAgents.join('\n') : 'None';
+  return repairedAgents.length ? repairedAgents.join(' | ') : 'None';
 };
 
 const summarizeImportantAgentWarnings = (agentRuns) => {
@@ -544,6 +536,31 @@ const summarizeImportantAgentWarnings = (agentRuns) => {
   });
 
   return collected.length ? collected.slice(0, 6).join('\n') : 'None';
+};
+
+const summarizeDebugAssets = ({ debugFilePath, finalPromptDebugFilePath, pipelineMeta, generatedTemplate }) => {
+  const debugEntries = [
+    debugFilePath ? 'request' : null,
+    finalPromptDebugFilePath ? 'prompt' : null,
+    generatedTemplate?.debugFilePath ? 'template' : null,
+    pipelineMeta?.debugFolderPath ? 'agents' : null,
+  ].filter(Boolean);
+
+  return debugEntries.length ? debugEntries.join(', ') : 'None';
+};
+
+const trimEmbedFields = (embed, maxFields = 25) => {
+  if (!embed?.data?.fields || embed.data.fields.length <= maxFields) {
+    return embed;
+  }
+
+  const keptFields = embed.data.fields.slice(0, maxFields - 1);
+  const removedCount = embed.data.fields.length - keptFields.length;
+  embed.data.fields = [
+    ...keptFields,
+    safeEmbedField('More Details', `+ ${removedCount} more fields were omitted. See the debug folder for full details.`, false),
+  ];
+  return embed;
 };
 
 const resolveBuildDebugFolder = ({ pipelineMeta, generatedTemplate, buildReport }) => {
@@ -574,8 +591,6 @@ const createMultiAgentFailureEmbed = ({ failedAgent, pipelineMeta, lmStudio }) =
       safeEmbedField('Timeout', failedRun?.timeout ? 'Yes' : 'No', true),
       safeEmbedField('Completed Agents', asBulletList(completedAgents, 'None'), false),
       safeEmbedField('Agent Statuses', summarizeAgentStatuses(pipelineMeta?.agentRuns), false),
-      safeEmbedField('Agent Durations', summarizeAgentDurations(pipelineMeta?.agentRuns), false),
-      safeEmbedField('Agent Timeouts', summarizeAgentTimeouts(pipelineMeta?.agentRuns), false),
       safeEmbedField('Agent Retries', summarizeAgentRetries(pipelineMeta?.agentRuns), false),
       safeEmbedField('Agent Repairs', summarizeAgentRepairs(pipelineMeta?.agentRuns), false),
       safeEmbedField('Error', failedRun?.error || lmStudio?.errorMessage || 'Unknown error', false),
@@ -663,32 +678,54 @@ const createBuildEmbed = (result, report = null) => {
         : 'The LM Studio local request was prepared successfully. LM Studio is currently disabled, so no generation was executed.',
     ))
     .addFields(
-      safeEmbedField('Provider', request.target.provider || 'lm-studio', true),
-      safeEmbedField('Base URL', request.target.baseUrl || 'Not configured', true),
-      safeEmbedField('Model', request.target.model || 'Not configured', true),
-      safeEmbedField('Prompt', request.source.prompt ? 'Provided' : 'Not provided', true),
-      safeEmbedField('File', request.source.attachment ? request.source.attachment.filename : 'Not provided', true),
-      safeEmbedField('Extracted Characters', extractedCharacters, true),
-      safeEmbedField('LM Studio Enabled', lmStudio.enabled ? 'Yes' : 'No', true),
-      safeEmbedField('LM Studio Call', lmStudio.called ? (lmStudio.success ? 'Success' : 'Failed') : 'Not attempted', true),
-      safeEmbedField('LM Studio Duration', lmStudio.called ? `${safeNumberLabel(lmStudio.durationMs, 'N/A')} ms` : 'Not attempted', true),
-      safeEmbedField('AI Skills', skillsMeta?.skillsEnabled ? 'Enabled' : 'Disabled', true),
-      safeEmbedField('AI Skills Mode', skillsMeta?.skillsMode || 'N/A', true),
-      safeEmbedField('AI Skills Loaded', safeNumberLabel(skillsMeta?.skillsLoaded, '0'), true),
       safeEmbedField('Pipeline Mode', pipelineMeta?.mode || 'single', true),
       safeEmbedField('Template Status', templateStatus, true),
-      safeEmbedField('Warnings', String(countDiagnostics(importantWarnings)), true),
-      safeEmbedField('Agent Statuses', summarizeAgentStatuses(pipelineMeta?.agentRuns), false),
-      safeEmbedField('Agent Retries', summarizeAgentRetries(pipelineMeta?.agentRuns), false),
-      safeEmbedField('JSON Extraction', lmStudio.jsonExtraction || 'Not attempted', true),
-      safeEmbedField('JSON Valid', generatedTemplate ? (generatedTemplate.valid ? 'Yes' : 'No') : 'Not checked', true),
-      safeEmbedField('Generated Template', generatedTemplate?.name || 'Not available', true),
-      safeEmbedField('Draft Saved', draftSaved, true),
       safeEmbedField('Dry Run Status', dryRunStatus || 'Not run', true),
+      safeEmbedField('Warnings', String(countDiagnostics(importantWarnings)), true),
       safeEmbedField('Actions Planned', totalActions ? String(totalActions) : 'Not available', true),
       safeEmbedField('Payload Count', totalPayloads ? String(totalPayloads) : 'Not available', true),
-      safeEmbedField('Draft Path', draftPath || 'Not saved', false),
+      safeEmbedField('Draft Saved', draftSaved, true),
+      safeEmbedField('JSON Valid', generatedTemplate ? (generatedTemplate.valid ? 'Yes' : 'No') : 'Not checked', true),
       safeEmbedField(
+        'Request',
+        [
+          `Provider: ${request.target.provider || 'lm-studio'}`,
+          `Model: ${request.target.model || 'Not configured'}`,
+          `Prompt: ${request.source.prompt ? 'Provided' : 'Not provided'}`,
+          `File: ${request.source.attachment ? request.source.attachment.filename : 'Not provided'}`,
+          `Chars: ${extractedCharacters}`,
+        ].join('\n'),
+        false,
+      ),
+      safeEmbedField(
+        'LM Studio',
+        [
+          `Enabled: ${lmStudio.enabled ? 'Yes' : 'No'}`,
+          `Call: ${lmStudio.called ? (lmStudio.success ? 'Success' : 'Failed') : 'Not attempted'}`,
+          `Duration: ${lmStudio.called ? `${safeNumberLabel(lmStudio.durationMs, 'N/A')} ms` : 'Not attempted'}`,
+          `JSON Extraction: ${lmStudio.jsonExtraction || 'Not attempted'}`,
+        ].join('\n'),
+        false,
+      ),
+      safeEmbedField(
+        'Skills',
+        [
+          `Enabled: ${skillsMeta?.skillsEnabled ? 'Yes' : 'No'}`,
+          `Mode: ${skillsMeta?.skillsMode || 'N/A'}`,
+          `Loaded: ${safeNumberLabel(skillsMeta?.skillsLoaded, '0')}`,
+        ].join('\n'),
+        false,
+      ),
+      safeEmbedField(
+        'Agents',
+        [
+          `Statuses: ${summarizeAgentStatuses(pipelineMeta?.agentRuns)}`,
+          `Retries: ${summarizeAgentRetries(pipelineMeta?.agentRuns)}`,
+          `Repairs: ${summarizeAgentRepairs(pipelineMeta?.agentRuns)}`,
+        ].join('\n'),
+        false,
+      ),
+      safeLimitedEmbedField(
         'Template Summary',
         templateSummary
           ? [
@@ -699,8 +736,9 @@ const createBuildEmbed = (result, report = null) => {
           ].join('\n')
           : 'Not available',
         false,
+        320,
       ),
-      safeEmbedField(
+      safeLimitedEmbedField(
         'Payload Summary',
         payloadSummary
           ? [
@@ -711,21 +749,28 @@ const createBuildEmbed = (result, report = null) => {
           ].join('\n')
           : 'Not available',
         false,
+        320,
       ),
-      safeEmbedField('Main Cause', getPrimaryIssue(importantErrors, importantWarnings) || 'None detected.', false),
-      safeEmbedField(
+      safeLimitedEmbedField('Main Cause', getPrimaryIssue(importantErrors, importantWarnings) || 'None detected.', false, 320),
+      safeLimitedEmbedField(
         'Top Diagnostics',
         summarizeDiagnostics(
           [...importantErrors, ...importantWarnings],
-          { fallback: 'None detected.', limit: 4 },
+          { fallback: 'None detected.', limit: 3 },
         ),
         false,
+        520,
       ),
-      safeEmbedField('Important Agent Warnings', summarizeImportantAgentWarnings(pipelineMeta?.agentRuns), false),
-      safeEmbedField('Debug Folder', debugFolder || 'Not written (production mode)', false),
-      safeEmbedField('Debug Request', debugFilePath || 'Not written (production mode)', false),
-      safeEmbedField('Debug Final Prompt', finalPromptDebugFilePath || 'Not written (production mode)', false),
-      safeEmbedField('Debug Agent Folder', pipelineMeta?.debugFolderPath || 'Not written (production mode)', false),
+      safeLimitedEmbedField('Agent Warnings', summarizeImportantAgentWarnings(pipelineMeta?.agentRuns), false, 420),
+      safeEmbedField(
+        'Debug',
+        [
+          `Folder: ${debugFolder || 'Not written (production mode)'}`,
+          `Assets: ${summarizeDebugAssets({ debugFilePath, finalPromptDebugFilePath, pipelineMeta, generatedTemplate })}`,
+          `Draft: ${draftPath || 'Not saved'}`,
+        ].join('\n'),
+        false,
+      ),
     );
 };
 
@@ -743,6 +788,8 @@ const logEmbedsBeforeReply = (embeds) => {
       : [],
   });
 };
+
+const normalizeEmbedsForDiscord = (embeds) => (Array.isArray(embeds) ? embeds.map((embed) => trimEmbedFields(embed)) : embeds);
 
 const summarizeFatalError = (error) => ({
   name: safeString(error?.name, 'UnknownError'),
@@ -1157,11 +1204,13 @@ module.exports = {
         }
       }
 
-      logEmbedsBeforeReply(embeds);
+      const normalizedEmbeds = normalizeEmbedsForDiscord(embeds);
+
+      logEmbedsBeforeReply(normalizedEmbeds);
 
       try {
         await editDeferredReply(interaction, {
-          embeds: embeds.slice(0, 5),
+          embeds: normalizedEmbeds.slice(0, 5),
         });
       } catch (replyError) {
         logger.error('Failed to send Discord response', {
