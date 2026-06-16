@@ -744,6 +744,7 @@ const runBuildAgentPipeline = async ({ prompt, attachment, normalizedBrief = nul
       guardOutput: guardContentOutput,
       guardContext: {
         architecture: architectRun.output,
+        normalizedBrief,
       },
       runDirectoryPath,
       timeoutMs: getAgentTimeoutMs('content'),

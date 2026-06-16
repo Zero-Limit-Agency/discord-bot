@@ -652,6 +652,147 @@ const sanitizeOptionalRef = (value, knownRefs, warnings, pathLabel, refType) => 
   return normalized;
 };
 
+const findArchitectureChannel = (architecture, matcher) => ensureArray(architecture?.channels)
+  .find((channel) => matcher([
+    channel?.id,
+    channel?.key,
+    channel?.name,
+    channel?.topic,
+  ].map(toCleanString).filter(Boolean).join(' ').toLowerCase()));
+
+const getChannelLabel = (channel) => toCleanString(channel?.name || channel?.id || channel?.key);
+
+const isGenericContentText = (value) => /read the rules|merci de lire les r[eè]gles|lisez les r[eè]gles|use the appropriate channels|utilisez les canaux appropri[eé]s|d'utiliser les canaux appropri[eé]s|commencez par lire les r[eè]gles/i
+  .test(toCleanString(value).toLowerCase());
+
+const pushContentItemIfMissing = (collection, item, warnings, reason) => {
+  if (!item || !toCleanString(item.text || item.description || item.title)) {
+    return;
+  }
+
+  const normalizedText = toCleanString(item.text || item.description || item.title).toLowerCase();
+  const exists = collection.some((entry) => (
+    toCleanString(entry?.text || entry?.description || entry?.title).toLowerCase() === normalizedText
+  ));
+
+  if (exists) {
+    return;
+  }
+
+  collection.push(item);
+  warnings.push(reason);
+};
+
+const enrichContentOutput = ({ content, context, warnings }) => {
+  const architecture = context?.architecture || {};
+  const normalizedBrief = context?.normalizedBrief || null;
+  const serverType = normalizedBrief?.serverType || 'general';
+  const tone = normalizedBrief?.tone || 'professional';
+  const welcomeChannel = findArchitectureChannel(architecture, (value) => /(welcome|bienvenue|start)/.test(value));
+  const rulesChannel = findArchitectureChannel(architecture, (value) => /(rules|regles|r[eè]gles)/.test(value));
+  const announcementsChannel = findArchitectureChannel(architecture, (value) => /(announcement|annonce)/.test(value));
+  const supportChannel = findArchitectureChannel(architecture, (value) => /(support|help)/.test(value));
+  const ticketChannel = findArchitectureChannel(architecture, (value) => /(ticket)/.test(value));
+  const scrimChannel = findArchitectureChannel(architecture, (value) => /(scrim|tournament|tournoi|tryout|player|team)/.test(value));
+  const premiumChannel = findArchitectureChannel(architecture, (value) => /(premium|vip)/.test(value));
+  const mediaChannel = findArchitectureChannel(architecture, (value) => /(media|m[eé]dia|content|creator|partnership)/.test(value));
+
+  const hasGenericWelcomeOnly = content.welcomeEmbeds.length === 1
+    && isGenericContentText(content.welcomeEmbeds[0]?.description);
+
+  if (content.welcomeEmbeds.length === 0) {
+    const baseTitle = serverType === 'premium-community'
+      ? 'Welcome to Your Premium Space'
+      : serverType === 'content-creator'
+        ? 'Welcome to the Creator Hub'
+        : serverType === 'esports'
+          ? 'Welcome to the Team Hub'
+          : 'Welcome';
+    const baseDescription = [
+      welcomeChannel ? `Start in ${getChannelLabel(welcomeChannel)}.` : null,
+      announcementsChannel ? `Check ${getChannelLabel(announcementsChannel)} for important updates.` : null,
+      supportChannel ? `Use ${getChannelLabel(supportChannel)} if you need help.` : null,
+    ].filter(Boolean).join(' ');
+
+    pushContentItemIfMissing(content.welcomeEmbeds, {
+      title: baseTitle,
+      description: baseDescription || 'Start with the key information channels and follow the onboarding flow.',
+    }, warnings, 'Content guard added a fallback welcome embed.');
+  }
+
+  if (hasGenericWelcomeOnly) {
+    let contextualDescription = '';
+
+    if (serverType === 'esports') {
+      contextualDescription = [
+        announcementsChannel ? `Watch ${getChannelLabel(announcementsChannel)} for official updates.` : null,
+        scrimChannel ? `Use ${getChannelLabel(scrimChannel)} for team coordination and competitive prep.` : null,
+        supportChannel ? `Contact staff via ${getChannelLabel(supportChannel)} if you need help.` : null,
+      ].filter(Boolean).join(' ');
+    } else if (serverType === 'content-creator') {
+      contextualDescription = [
+        announcementsChannel ? `Follow ${getChannelLabel(announcementsChannel)} for releases and live updates.` : null,
+        mediaChannel ? `Share or review creator activity in ${getChannelLabel(mediaChannel)}.` : null,
+        supportChannel ? `Use ${getChannelLabel(supportChannel)} for member support or moderation help.` : null,
+      ].filter(Boolean).join(' ');
+    } else if (serverType === 'premium-community') {
+      contextualDescription = [
+        premiumChannel ? `Premium members should check ${getChannelLabel(premiumChannel)} for private access.` : null,
+        ticketChannel ? `Open requests through ${getChannelLabel(ticketChannel)} when support is needed.` : null,
+        supportChannel ? `Use ${getChannelLabel(supportChannel)} for member assistance.` : null,
+      ].filter(Boolean).join(' ');
+    }
+
+    if (contextualDescription) {
+      pushContentItemIfMissing(content.welcomeEmbeds, {
+        title: tone === 'premium' ? 'Member Access & Next Steps' : 'How To Use This Server',
+        description: contextualDescription,
+      }, warnings, 'Content guard added a contextual welcome embed.');
+    }
+  }
+
+  if (content.rules.length === 0) {
+    const rulesText = tone === 'premium'
+      ? 'Keep conversations clear, respectful, and aligned with the premium standard of the server.'
+      : serverType === 'esports'
+        ? 'Use the right channels, keep competitive coordination focused, and follow staff guidance during team operations.'
+        : serverType === 'content-creator'
+          ? 'Keep discussions constructive, publish in the right channels, and respect staff or creator directions.'
+          : 'Use the correct channels, stay respectful, and follow staff guidance.';
+
+    pushContentItemIfMissing(content.rules, {
+      channelId: rulesChannel ? rulesChannel.id || rulesChannel.key : (welcomeChannel ? welcomeChannel.id || welcomeChannel.key : undefined),
+      text: rulesText,
+    }, warnings, 'Content guard added fallback rule guidance.');
+  }
+
+  if (content.onboardingNotes.length === 0 || content.onboardingNotes.every((note) => isGenericContentText(note?.text))) {
+    const onboardingText = [
+      welcomeChannel ? `Start in ${getChannelLabel(welcomeChannel)}.` : null,
+      announcementsChannel ? `Then review ${getChannelLabel(announcementsChannel)} for updates.` : null,
+      supportChannel ? `If anything is unclear, ask in ${getChannelLabel(supportChannel)}.` : null,
+      premiumChannel && serverType === 'premium-community' ? `Premium access details are available in ${getChannelLabel(premiumChannel)}.` : null,
+    ].filter(Boolean).join(' ');
+
+    pushContentItemIfMissing(content.onboardingNotes, {
+      channelId: (welcomeChannel?.id || welcomeChannel?.key || announcementsChannel?.id || announcementsChannel?.key || ''),
+      text: onboardingText || 'Start with the welcome information and follow the main community channels.',
+    }, warnings, 'Content guard added fallback onboarding guidance.');
+  }
+
+  if (content.ticketGuidance.length === 0 && (supportChannel || ticketChannel)) {
+    const targetChannel = ticketChannel || supportChannel;
+    const ticketText = ticketChannel
+      ? `Use ${getChannelLabel(ticketChannel)} for structured support requests and keep issue details concise.`
+      : `Use ${getChannelLabel(supportChannel)} for help requests and provide clear context when contacting staff.`;
+
+    pushContentItemIfMissing(content.ticketGuidance, {
+      channelId: targetChannel?.id || targetChannel?.key || '',
+      text: ticketText,
+    }, warnings, 'Content guard added fallback support guidance.');
+  }
+};
+
 const sanitizeSimpleContentItem = (item, index, warnings, knownRefs, collectionName) => {
   if (typeof item === 'string') {
     const text = trimToLength(item, MAX_NOTE_TEXT_LENGTH);
@@ -769,18 +910,26 @@ const guardContentOutput = (output, context = {}) => {
     .map((item, index) => sanitizeSimpleContentItem(item, index, warnings, knownRefs, 'ticketGuidance'))
     .filter(Boolean);
 
-  if (!welcomeEmbeds.length && !rules.length && !onboardingNotes.length && !ticketGuidance.length) {
+  const guardedContent = {
+    welcomeEmbeds,
+    rules,
+    onboardingNotes,
+    ticketGuidance,
+  };
+
+  enrichContentOutput({
+    content: guardedContent,
+    context,
+    warnings,
+  });
+
+  if (!guardedContent.welcomeEmbeds.length && !guardedContent.rules.length && !guardedContent.onboardingNotes.length && !guardedContent.ticketGuidance.length) {
     errors.push('Content output is empty after cleanup.');
   }
 
   return {
     ok: errors.length === 0,
-    output: {
-      welcomeEmbeds,
-      rules,
-      onboardingNotes,
-      ticketGuidance,
-    },
+    output: guardedContent,
     errors,
     warnings,
   };

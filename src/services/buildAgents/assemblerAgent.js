@@ -331,6 +331,9 @@ const assembleTemplateLocally = ({
   const categories = cloneArray(architecture?.categories);
   const channels = cloneArray(architecture?.channels);
   const welcomeEmbeds = cloneArray(content?.welcomeEmbeds);
+  const rules = cloneArray(content?.rules);
+  const onboardingNotes = cloneArray(content?.onboardingNotes);
+  const ticketGuidance = cloneArray(content?.ticketGuidance);
   const warnings = [];
 
   roles.forEach((role, index) => {
@@ -365,6 +368,9 @@ const assembleTemplateLocally = ({
       categories,
       channels,
       welcomeEmbeds,
+      rules,
+      onboardingNotes,
+      ticketGuidance,
     },
     warnings,
   };
