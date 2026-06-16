@@ -205,6 +205,50 @@ const normalizeRoleRefs = (roles) => new Set(
   roles.flatMap((role) => [role.id, role.key, role.name]).map(normalizeIdentifier).filter(Boolean),
 );
 
+const getRoleSpecificityScore = (role) => {
+  const permissionsCount = safeArray(role?.permissions).length;
+  const mentionableScore = role?.mentionable ? 1 : 0;
+  const hoistScore = role?.hoist ? 1 : 0;
+
+  return permissionsCount + mentionableScore + hoistScore;
+};
+
+const dedupeRoles = (roles, warnings) => {
+  const deduped = [];
+  const roleIndexByName = new Map();
+
+  safeArray(roles).forEach((role) => {
+    const normalizedName = normalizeIdentifier(role?.name);
+
+    if (!normalizedName) {
+      deduped.push(role);
+      return;
+    }
+
+    if (!roleIndexByName.has(normalizedName)) {
+      roleIndexByName.set(normalizedName, deduped.length);
+      deduped.push(role);
+      return;
+    }
+
+    const existingRoleIndex = roleIndexByName.get(normalizedName);
+    const existingRole = deduped[existingRoleIndex];
+    const keepIncoming = getRoleSpecificityScore(role) > getRoleSpecificityScore(existingRole);
+
+    if (keepIncoming) {
+      deduped[existingRoleIndex] = {
+        ...existingRole,
+        ...role,
+        permissions: safeArray(role.permissions).length ? role.permissions : existingRole.permissions,
+      };
+    }
+
+    warnings.push(`Assembler deduplicated role "${role.name}".`);
+  });
+
+  return deduped;
+};
+
 const createCategoryLookup = (categories) => new Map(
   categories.map((category) => [
     normalizeIdentifier(category.id || category.key || category.name),
@@ -342,6 +386,8 @@ const assembleTemplateLocally = ({
     role.key = role.key || id;
   });
 
+  const dedupedRoles = dedupeRoles(roles, warnings);
+
   categories.forEach((category, index) => {
     const id = category.id || category.key || slugify(category.name, `category-${index + 1}`);
     category.id = id;
@@ -355,16 +401,16 @@ const assembleTemplateLocally = ({
     channel.type = channel.type || 'text';
   });
 
-  applyRolePermissions(roles, permissions?.rolePermissions);
+  applyRolePermissions(dedupedRoles, permissions?.rolePermissions);
   ensureCategoryAssignments(channels, categories, warnings);
-  applyChannelOverwrites(channels, permissions?.channelOverwrites, normalizeRoleRefs(roles), warnings);
-  ensureInferredPrivateOverwrites(channels, categories, roles, warnings);
+  applyChannelOverwrites(channels, permissions?.channelOverwrites, normalizeRoleRefs(dedupedRoles), warnings);
+  ensureInferredPrivateOverwrites(channels, categories, dedupedRoles, warnings);
 
   return {
     template: {
       name: architecture?.name || '',
       description: architecture?.description || '',
-      roles,
+      roles: dedupedRoles,
       categories,
       channels,
       welcomeEmbeds,

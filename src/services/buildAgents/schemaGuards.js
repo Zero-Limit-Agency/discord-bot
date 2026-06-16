@@ -104,6 +104,13 @@ const ensureEntity = (collection, entity, warnings, reason) => {
   warnings.push(reason);
 };
 
+const hasSemanticEntity = (collection, regex) => ensureArray(collection).some((item) => (
+  [item?.id, item?.key, item?.name]
+    .map(toCleanString)
+    .filter(Boolean)
+    .some((value) => regex.test(value.toLowerCase()))
+));
+
 const findCategoryId = (categories, preferredIds = []) => {
   const loweredPreferredIds = preferredIds.map((value) => toCleanString(value).toLowerCase()).filter(Boolean);
   const exactMatch = categories.find((category) => (
@@ -129,6 +136,7 @@ const applyArchitectBriefHints = (guarded, context, warnings) => {
   const supportHints = ensureArray(normalizedBrief.supportHints);
   const originalPrompt = toCleanString(normalizedBrief.originalPrompt).toLowerCase();
   const hasTournamentHint = /(tournoi|tournament|tryout)/.test(originalPrompt);
+  const hasVipHint = /\bvip\b/.test(originalPrompt);
 
   if (requiredAreas.includes('staff-operations') || rolesMentioned.includes('staff')) {
     ensureEntity(guarded.roles, {
@@ -149,24 +157,45 @@ const applyArchitectBriefHints = (guarded, context, warnings) => {
       key: 'player',
       name: 'Player',
     }, warnings, 'Architect guard added missing player role from brief hints.');
-    ensureEntity(guarded.categories, {
-      id: 'team-operations',
-      key: 'team-operations',
-      name: 'Team Operations',
-    }, warnings, 'Architect guard added missing team operations category from brief hints.');
+
+    if (!hasSemanticEntity(guarded.categories, /(player|roster)/)) {
+      ensureEntity(guarded.categories, {
+        id: 'player-zone',
+        key: 'player-zone',
+        name: 'Player Zone',
+      }, warnings, 'Architect guard added missing player category from brief hints.');
+    } else {
+      ensureEntity(guarded.categories, {
+        id: 'team-operations',
+        key: 'team-operations',
+        name: 'Team Operations',
+      }, warnings, 'Architect guard added missing team operations category from brief hints.');
+    }
   }
 
-  if (requiredAreas.includes('premium-private') || rolesMentioned.includes('premium') || normalizedBrief.serverType === 'premium-community') {
+  if ((requiredAreas.includes('premium-private') || rolesMentioned.includes('premium') || normalizedBrief.serverType === 'premium-community')
+    && !hasSemanticEntity(guarded.roles, /(premium|vip)/)) {
     ensureEntity(guarded.roles, {
       id: 'premium',
       key: 'premium',
       name: 'Premium Member',
     }, warnings, 'Architect guard added missing premium role from brief hints.');
+  }
+
+  if (requiredAreas.includes('premium-private') || rolesMentioned.includes('premium') || normalizedBrief.serverType === 'premium-community') {
     ensureEntity(guarded.categories, {
       id: 'premium-private',
       key: 'premium-private',
-      name: 'Premium Private',
+      name: hasVipHint ? 'VIP Private' : 'Premium Private',
     }, warnings, 'Architect guard added missing premium category from brief hints.');
+  }
+
+  if (hasVipHint && !hasSemanticEntity(guarded.roles, /\bvip\b/)) {
+    ensureEntity(guarded.roles, {
+      id: 'vip-member',
+      key: 'vip-member',
+      name: 'VIP Member',
+    }, warnings, 'Architect guard added missing VIP role from brief hints.');
   }
 
   if (normalizedBrief.serverType === 'content-creator') {
@@ -182,6 +211,22 @@ const applyArchitectBriefHints = (guarded, context, warnings) => {
         key: 'staff',
         name: 'Staff',
       }, warnings, 'Architect guard added missing staff role for managed creator community.');
+    }
+
+    if (!hasSemanticEntity(guarded.categories, /(content|creator)/)) {
+      ensureEntity(guarded.categories, {
+        id: 'content-studio',
+        key: 'content-studio',
+        name: 'Content Studio',
+      }, warnings, 'Architect guard added missing content category for creator brief.');
+    }
+
+    if (!hasSemanticEntity(guarded.categories, /(community|public|discussion)/)) {
+      ensureEntity(guarded.categories, {
+        id: 'community-lounge',
+        key: 'community-lounge',
+        name: 'Community Lounge',
+      }, warnings, 'Architect guard added missing community category for creator brief.');
     }
   }
 
@@ -241,7 +286,7 @@ const applyArchitectBriefHints = (guarded, context, warnings) => {
       key: 'scrims',
       name: 'scrims',
       type: 'text',
-      categoryId: findCategoryId(guarded.categories, ['team-operations']),
+      categoryId: findCategoryId(guarded.categories, ['player-zone', 'team-operations']),
     }, warnings, 'Architect guard added missing scrims channel from brief hints.');
   }
 
@@ -251,9 +296,72 @@ const applyArchitectBriefHints = (guarded, context, warnings) => {
       key: 'tournaments',
       name: 'tournaments',
       type: 'text',
-      categoryId: findCategoryId(guarded.categories, ['team-operations']),
+      categoryId: findCategoryId(guarded.categories, ['player-zone', 'team-operations']),
     }, warnings, 'Architect guard added missing tournaments channel from brief hints.');
   }
+
+  if (normalizedBrief.serverType === 'content-creator' && !hasSemanticEntity(guarded.channels, /(content|creator|media)/)) {
+    ensureEntity(guarded.channels, {
+      id: 'content-feed',
+      key: 'content-feed',
+      name: 'content-feed',
+      type: 'text',
+      categoryId: findCategoryId(guarded.categories, ['content-studio', 'media-announcements']),
+    }, warnings, 'Architect guard added missing content channel for creator brief.');
+  }
+
+  if (normalizedBrief.serverType === 'content-creator' && !hasSemanticEntity(guarded.channels, /(community|discussion|general)/)) {
+    ensureEntity(guarded.channels, {
+      id: 'community-chat',
+      key: 'community-chat',
+      name: 'community-chat',
+      type: 'text',
+      categoryId: findCategoryId(guarded.categories, ['community-lounge', 'public-community']),
+    }, warnings, 'Architect guard added missing community chat for creator brief.');
+  }
+
+  if (hasVipHint && !hasSemanticEntity(guarded.channels, /\bvip\b/)) {
+    ensureEntity(guarded.channels, {
+      id: 'vip-lounge',
+      key: 'vip-lounge',
+      name: 'vip-lounge',
+      type: 'text',
+      categoryId: findCategoryId(guarded.categories, ['premium-private']),
+    }, warnings, 'Architect guard added missing VIP channel from brief hints.');
+  }
+
+  const playerCategoryId = findCategoryId(guarded.categories, ['player-zone']);
+
+  guarded.channels = guarded.channels.map((channel) => {
+    const channelText = [channel.id, channel.key, channel.name]
+      .map(toCleanString)
+      .filter(Boolean)
+      .join(' ')
+      .toLowerCase();
+
+    if (playerCategoryId && /(player|roster|scrim|tournament|tryout)/.test(channelText)) {
+      return {
+        ...channel,
+        categoryId: playerCategoryId,
+      };
+    }
+
+    if (normalizedBrief.serverType === 'content-creator' && /(media|creator|content)/.test(channelText)) {
+      return {
+        ...channel,
+        categoryId: findCategoryId(guarded.categories, ['content-studio', 'media-announcements']) || channel.categoryId,
+      };
+    }
+
+    if (normalizedBrief.serverType === 'content-creator' && /(community|general|discussion)/.test(channelText)) {
+      return {
+        ...channel,
+        categoryId: findCategoryId(guarded.categories, ['community-lounge', 'public-community']) || channel.categoryId,
+      };
+    }
+
+    return channel;
+  });
 };
 
 const guardArchitectOutput = (output, context = {}) => {
@@ -413,6 +521,7 @@ const deriveRolePermissions = ({
 }) => {
   const rolePermissions = [];
   const generatedOverwrites = [];
+  const roleLevelBlockedPermissions = new Set(['connect', 'speak']);
 
   ensureArray(entry.permissions).forEach((permissionEntry, permissionIndex) => {
     if (typeof permissionEntry === 'string') {
@@ -454,7 +563,16 @@ const deriveRolePermissions = ({
     }
 
     if (!normalizedTarget || ['@me', '@self', '@everyone', normalizedRoleId].includes(normalizedTarget) || roleLookup.has(normalizedTarget)) {
-      rolePermissions.push(...allow);
+      const safeRolePermissions = allow.filter((permission) => {
+        if (!roleLevelBlockedPermissions.has(permission)) {
+          return true;
+        }
+
+        warnings.push(`${pathLabel}[${permissionIndex}] dropped voice permission "${permission}" from role-level permissions for "${roleId}".`);
+        return false;
+      });
+
+      rolePermissions.push(...safeRolePermissions);
       warnings.push(`${pathLabel}[${permissionIndex}] object form was normalized into role permissions for "${roleId}".`);
       return;
     }
@@ -506,11 +624,46 @@ const mergeChannelOverwriteEntries = (entries = []) => {
   return Array.from(merged.values());
 };
 
+const createChannelTypeLookup = (channels = []) => {
+  const lookup = new Map();
+
+  ensureArray(channels)
+    .filter(isPlainObject)
+    .forEach((channel) => {
+      const type = toCleanString(channel.type).toLowerCase();
+      [channel.id, channel.key, channel.name]
+        .map(toCleanString)
+        .filter(Boolean)
+        .forEach((value) => lookup.set(value.toLowerCase(), type));
+    });
+
+  return lookup;
+};
+
+const filterVoicePermissionsForChannel = (permissions, warnings, pathLabel, channelType) => {
+  const voicePermissions = new Set(['connect', 'speak']);
+  const effectiveChannelType = toCleanString(channelType).toLowerCase();
+
+  return ensureArray(permissions).filter((permission) => {
+    if (!voicePermissions.has(permission)) {
+      return true;
+    }
+
+    if (effectiveChannelType === 'voice') {
+      return true;
+    }
+
+    warnings.push(`${pathLabel} dropped voice permission "${permission}" on non-voice channel.`);
+    return false;
+  });
+};
+
 const guardPermissionsOutput = (output, context = {}) => {
   const errors = [];
   const warnings = [];
   const roleLookup = createRefLookup(context.architecture?.roles);
   const channelLookup = createRefLookup(context.architecture?.channels);
+  const channelTypeLookup = createChannelTypeLookup(context.architecture?.channels);
 
   if (!isPlainObject(output)) {
     return {
@@ -556,6 +709,7 @@ const guardPermissionsOutput = (output, context = {}) => {
       }
 
       const resolvedChannelId = resolveKnownRef(entry.channelId, channelLookup);
+      const channelType = channelTypeLookup.get(toCleanString(resolvedChannelId).toLowerCase()) || '';
 
       const permissions = ensureArray(entry.permissions)
         .filter(isPlainObject)
@@ -565,8 +719,18 @@ const guardPermissionsOutput = (output, context = {}) => {
             permission.target || permission.roleId || permission.roleKey || permission.role,
             roleLookup,
           ) || '@everyone',
-          allow: filterSupportedPermissions(permission.allow, warnings, `channelOverwrites[${index}].permissions[${permissionIndex}].allow`),
-          deny: filterSupportedPermissions(permission.deny, warnings, `channelOverwrites[${index}].permissions[${permissionIndex}].deny`),
+          allow: filterVoicePermissionsForChannel(
+            filterSupportedPermissions(permission.allow, warnings, `channelOverwrites[${index}].permissions[${permissionIndex}].allow`),
+            warnings,
+            `channelOverwrites[${index}].permissions[${permissionIndex}].allow`,
+            channelType,
+          ),
+          deny: filterVoicePermissionsForChannel(
+            filterSupportedPermissions(permission.deny, warnings, `channelOverwrites[${index}].permissions[${permissionIndex}].deny`),
+            warnings,
+            `channelOverwrites[${index}].permissions[${permissionIndex}].deny`,
+            channelType,
+          ),
         }));
 
       return {
