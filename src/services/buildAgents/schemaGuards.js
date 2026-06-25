@@ -525,7 +525,18 @@ const deriveRolePermissions = ({
 
   ensureArray(entry.permissions).forEach((permissionEntry, permissionIndex) => {
     if (typeof permissionEntry === 'string') {
-      rolePermissions.push(permissionEntry);
+      const normalizedPermission = normalizePermissionName(permissionEntry);
+
+      if (!normalizedPermission) {
+        return;
+      }
+
+      if (roleLevelBlockedPermissions.has(normalizedPermission)) {
+        warnings.push(`__DROP_ROLE_VOICE_PERMISSION__|${pathLabel}|${roleId}|${normalizedPermission}`);
+        return;
+      }
+
+      rolePermissions.push(normalizedPermission);
       return;
     }
 
@@ -568,7 +579,7 @@ const deriveRolePermissions = ({
           return true;
         }
 
-        warnings.push(`${pathLabel}[${permissionIndex}] dropped voice permission "${permission}" from role-level permissions for "${roleId}".`);
+        warnings.push(`__DROP_ROLE_VOICE_PERMISSION__|${pathLabel}|${roleId}|${permission}`);
         return false;
       });
 
@@ -599,6 +610,39 @@ const deriveRolePermissions = ({
     rolePermissions: Array.from(new Set(rolePermissions)),
     generatedOverwrites,
   };
+};
+
+const coalescePermissionWarnings = (warnings = []) => {
+  const groupedDrops = new Map();
+  const passthrough = [];
+
+  warnings.forEach((warning) => {
+    const text = String(warning || '');
+
+    if (!text.startsWith('__DROP_ROLE_VOICE_PERMISSION__|')) {
+      passthrough.push(text);
+      return;
+    }
+
+    const [, pathLabel, roleId, permission] = text.split('|');
+    const key = `${pathLabel}|${roleId}`;
+
+    if (!groupedDrops.has(key)) {
+      groupedDrops.set(key, {
+        pathLabel,
+        roleId,
+        permissions: new Set(),
+      });
+    }
+
+    groupedDrops.get(key).permissions.add(permission);
+  });
+
+  groupedDrops.forEach(({ pathLabel, roleId, permissions }) => {
+    passthrough.push(`${pathLabel} dropped voice permissions "${Array.from(permissions).join(', ')}" from role-level permissions for "${roleId}".`);
+  });
+
+  return passthrough;
 };
 
 const mergeChannelOverwriteEntries = (entries = []) => {
@@ -767,7 +811,7 @@ const guardPermissionsOutput = (output, context = {}) => {
       permissionNotes: ensureArray(output.permissionNotes),
     },
     errors,
-    warnings,
+    warnings: coalescePermissionWarnings(warnings),
   };
 };
 
