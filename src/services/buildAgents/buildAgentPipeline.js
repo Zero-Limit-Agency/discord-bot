@@ -16,6 +16,7 @@ const {
 } = require('./schemaGuards');
 
 const debugDirectoryPath = path.join(process.cwd(), 'debug', 'build-agents');
+let hasLoggedBuildRuntimeDiagnostics = false;
 
 const isProduction = () => process.env.NODE_ENV === 'production';
 
@@ -512,18 +513,51 @@ const buildSkillsMeta = (skillsBlock) => ({
   maxChars: skillsBlock.maxChars,
 });
 
+const logBuildRuntimeDiagnosticsOnce = () => {
+  if (hasLoggedBuildRuntimeDiagnostics) {
+    return;
+  }
+
+  hasLoggedBuildRuntimeDiagnostics = true;
+  const diagnostics = typeof config.getBuildRuntimeDiagnostics === 'function'
+    ? config.getBuildRuntimeDiagnostics()
+    : {
+      pipelineMode: config.buildPipelineMode,
+      agentDefaultTimeoutMs: config.buildAgentTimeoutMs,
+      architectTimeoutMs: config.buildArchitectTimeoutMs,
+      permissionsTimeoutMs: config.buildPermissionsTimeoutMs,
+      contentTimeoutMs: config.buildContentTimeoutMs,
+      assemblerTimeoutMs: config.buildAssemblerTimeoutMs,
+      lmStudioTimeoutMs: config.lmStudioTimeoutMs,
+      maxRetries: config.buildAgentMaxRetries,
+      timeoutMismatch: false,
+    };
+
+  logger.info('Build runtime diagnostics', diagnostics);
+};
+
 const getAgentTimeoutMs = (agent) => {
+  const runtimeTimeouts = typeof config.getRuntimeTimeoutConfig === 'function'
+    ? config.getRuntimeTimeoutConfig()
+    : {
+      buildAgentTimeoutMs: config.buildAgentTimeoutMs,
+      buildArchitectTimeoutMs: config.buildArchitectTimeoutMs,
+      buildPermissionsTimeoutMs: config.buildPermissionsTimeoutMs,
+      buildContentTimeoutMs: config.buildContentTimeoutMs,
+      buildAssemblerTimeoutMs: config.buildAssemblerTimeoutMs,
+    };
+
   switch (agent) {
     case 'architect':
-      return config.buildArchitectTimeoutMs || config.buildAgentTimeoutMs;
+      return runtimeTimeouts.buildArchitectTimeoutMs || runtimeTimeouts.buildAgentTimeoutMs;
     case 'permissions':
-      return config.buildPermissionsTimeoutMs || config.buildAgentTimeoutMs;
+      return runtimeTimeouts.buildPermissionsTimeoutMs || runtimeTimeouts.buildAgentTimeoutMs;
     case 'content':
-      return config.buildContentTimeoutMs || config.buildAgentTimeoutMs;
+      return runtimeTimeouts.buildContentTimeoutMs || runtimeTimeouts.buildAgentTimeoutMs;
     case 'assembler':
-      return config.buildAssemblerTimeoutMs || config.buildAgentTimeoutMs;
+      return runtimeTimeouts.buildAssemblerTimeoutMs || runtimeTimeouts.buildAgentTimeoutMs;
     default:
-      return config.buildAgentTimeoutMs;
+      return runtimeTimeouts.buildAgentTimeoutMs;
   }
 };
 
@@ -659,6 +693,7 @@ const stopWithFailure = ({
 });
 
 const runBuildAgentPipeline = async ({ prompt, attachment, normalizedBrief = null }) => {
+  logBuildRuntimeDiagnosticsOnce();
   const runId = createRunId();
   const runDirectoryPath = isProduction()
     ? null
@@ -673,7 +708,9 @@ const runBuildAgentPipeline = async ({ prompt, attachment, normalizedBrief = nul
     });
     const skillsMeta = buildSkillsMeta(skillsBlock);
     const model = config.lmStudioModel || 'MODEL_NOT_CONFIGURED';
-    const maxRetries = config.buildAgentMaxRetries;
+    const maxRetries = typeof config.getRuntimeTimeoutConfig === 'function'
+      ? config.getRuntimeTimeoutConfig().buildAgentMaxRetries
+      : config.buildAgentMaxRetries;
 
     const architectRun = await runGuardedAgent({
       agent: 'architect',
@@ -837,4 +874,5 @@ const runBuildAgentPipeline = async ({ prompt, attachment, normalizedBrief = nul
 
 module.exports = {
   runBuildAgentPipeline,
+  logBuildRuntimeDiagnosticsOnce,
 };

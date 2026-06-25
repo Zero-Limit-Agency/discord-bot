@@ -13,7 +13,10 @@ const { validateTemplate } = require('../services/discordTemplateService');
 const { saveDraftTemplate } = require('../services/draftTemplateStore');
 const { normalizeTemplate } = require('../services/templateNormalizer');
 const { repairTemplate } = require('../services/templateRepairService');
-const { runBuildAgentPipeline } = require('../services/buildAgents/buildAgentPipeline');
+const {
+  runBuildAgentPipeline,
+  logBuildRuntimeDiagnosticsOnce,
+} = require('../services/buildAgents/buildAgentPipeline');
 const { buildServerPlan } = require('../services/serverGenerator');
 const { buildDiscordPayloads } = require('../services/discordPayloadBuilder');
 const { buildExecutionPlan } = require('../services/discordServerOrchestrator');
@@ -1007,6 +1010,17 @@ module.exports = {
     });
 
     try {
+      logBuildRuntimeDiagnosticsOnce();
+      const runtimeTimeouts = typeof config.getRuntimeTimeoutConfig === 'function'
+        ? config.getRuntimeTimeoutConfig()
+        : {
+          buildPipelineMode: config.buildPipelineMode,
+          buildAgentTimeoutMs: config.buildAgentTimeoutMs,
+          lmStudioTimeoutMs: config.lmStudioTimeoutMs,
+          buildAgentMaxRetries: config.buildAgentMaxRetries,
+        };
+      const lmStudioEnabled = config.lmStudioEnabled;
+      const buildPipelineMode = runtimeTimeouts.buildPipelineMode || config.buildPipelineMode;
       const prompt = interaction.options.getString('prompt');
       const file = interaction.options.getAttachment('file');
       let attachmentContent = null;
@@ -1072,7 +1086,7 @@ module.exports = {
       }
 
       let lmStudio = {
-        enabled: config.lmStudioEnabled,
+        enabled: lmStudioEnabled,
         called: false,
         success: false,
         errorMessage: null,
@@ -1083,12 +1097,12 @@ module.exports = {
       let generatedTemplate = null;
       let buildReport = null;
       let pipelineMeta = {
-        mode: config.buildPipelineMode,
+        mode: buildPipelineMode,
         agentRuns: [],
       };
 
-      if (config.lmStudioEnabled) {
-        if (config.buildPipelineMode === 'multi') {
+      if (lmStudioEnabled) {
+        if (buildPipelineMode === 'multi') {
           const pipelineResult = await runBuildAgentPipeline({
             prompt,
             attachment: attachmentContent,
@@ -1140,7 +1154,9 @@ module.exports = {
           if (!lmStudioResult.ok) {
             lmStudio.success = false;
             lmStudio.errorMessage = lmStudioResult.code === 'TIMEOUT'
-              ? 'LM Studio a mis trop de temps. Essaie un prompt plus court ou passe AI_SKILLS_MODE=minimal/off.'
+              ? (lmStudioResult.hasTimeoutMismatch
+                ? `LM Studio timeout mismatch detected. Effective request timeout=${safeNumberLabel(lmStudioResult.timeoutMs, 'N/A')} ms, configured LMSTUDIO_TIMEOUT_MS=${safeNumberLabel(lmStudioResult.configuredTimeoutMs, 'N/A')} ms.`
+                : 'LM Studio a mis trop de temps. Essaie un prompt plus court ou passe AI_SKILLS_MODE=minimal/off.')
               : lmStudioResult.message;
 
             if (lmStudioResult.code === 'TIMEOUT') {

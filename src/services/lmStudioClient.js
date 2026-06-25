@@ -11,9 +11,15 @@ const extractContentFromResponse = (payload) => {
 const callLmStudio = async (requestPayload, options = {}) => {
   const startedAt = Date.now();
   const controller = new AbortController();
-  const timeoutMs = Number.isFinite(options.timeoutMs) && options.timeoutMs > 0
+  const runtimeTimeouts = typeof config.getRuntimeTimeoutConfig === 'function'
+    ? config.getRuntimeTimeoutConfig()
+    : { lmStudioTimeoutMs: config.lmStudioTimeoutMs };
+  const requestedTimeoutMs = Number.isFinite(options.timeoutMs) && options.timeoutMs > 0
     ? options.timeoutMs
-    : config.lmStudioTimeoutMs;
+    : null;
+  const timeoutMs = typeof config.getEffectiveLmStudioTimeoutMs === 'function'
+    ? config.getEffectiveLmStudioTimeoutMs(requestedTimeoutMs)
+    : (requestedTimeoutMs || runtimeTimeouts.lmStudioTimeoutMs);
   const timeout = setTimeout(() => controller.abort(), timeoutMs);
 
   try {
@@ -39,6 +45,7 @@ const callLmStudio = async (requestPayload, options = {}) => {
         code: 'HTTP_ERROR',
         status: response.status,
         durationMs,
+        timeoutMs,
         message: 'LM Studio returned an HTTP error.',
       };
     }
@@ -55,6 +62,7 @@ const callLmStudio = async (requestPayload, options = {}) => {
         ok: false,
         code: 'INVALID_RESPONSE',
         durationMs,
+        timeoutMs,
         message: 'LM Studio returned an invalid response.',
       };
     }
@@ -67,22 +75,35 @@ const callLmStudio = async (requestPayload, options = {}) => {
       ok: true,
       content,
       durationMs,
+      timeoutMs,
     };
   } catch (error) {
     const durationMs = getRequestDurationMs(startedAt);
     const isTimeout = error?.name === 'AbortError';
+    const hasTimeoutMismatch = Number.isFinite(requestedTimeoutMs)
+      && requestedTimeoutMs > 0
+      && runtimeTimeouts.lmStudioTimeoutMs < requestedTimeoutMs;
 
     logger.warn('LM Studio request error', {
       code: error?.name || 'UNKNOWN_ERROR',
       durationMs,
+      timeoutMs,
+      requestedTimeoutMs,
+      configuredTimeoutMs: runtimeTimeouts.lmStudioTimeoutMs,
     });
 
     return {
       ok: false,
       code: isTimeout ? 'TIMEOUT' : 'REQUEST_FAILED',
       durationMs,
+      timeoutMs,
+      requestedTimeoutMs,
+      configuredTimeoutMs: runtimeTimeouts.lmStudioTimeoutMs,
+      hasTimeoutMismatch,
       message: isTimeout
-        ? 'LM Studio a mis trop de temps a repondre. Reessaie avec un prompt plus court ou augmente LMSTUDIO_TIMEOUT_MS.'
+        ? (hasTimeoutMismatch
+          ? `LM Studio a atteint ${timeoutMs} ms apres alignement avec le timeout agent. Verifie la coherence entre LMSTUDIO_TIMEOUT_MS (${runtimeTimeouts.lmStudioTimeoutMs}) et le timeout agent demande (${requestedTimeoutMs}).`
+          : 'LM Studio a mis trop de temps a repondre. Reessaie avec un prompt plus court ou augmente LMSTUDIO_TIMEOUT_MS.')
         : 'LM Studio request failed.',
     };
   } finally {

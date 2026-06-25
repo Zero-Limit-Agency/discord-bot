@@ -2,6 +2,64 @@ const dotenv = require('dotenv');
 
 dotenv.config();
 
+const parsePositiveInt = (value, fallback) => {
+  const parsed = Number.parseInt(String(value || '').trim(), 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+};
+
+const normalizePipelineMode = (value) => {
+  const normalized = String(value || 'single').trim().toLowerCase();
+  return ['single', 'multi'].includes(normalized) ? normalized : 'single';
+};
+
+const normalizeAiSkillsMode = (value) => {
+  const normalized = String(value || 'compact').trim().toLowerCase();
+  return ['off', 'minimal', 'compact', 'full'].includes(normalized) ? normalized : 'compact';
+};
+
+const getRuntimeTimeoutConfig = () => {
+  const buildAgentTimeoutMs = parsePositiveInt(process.env.BUILD_AGENT_TIMEOUT_MS, 900000);
+  const lmStudioTimeoutMs = parsePositiveInt(process.env.LMSTUDIO_TIMEOUT_MS, 180000);
+
+  return {
+    buildPipelineMode: normalizePipelineMode(process.env.BUILD_PIPELINE_MODE),
+    buildAgentTimeoutMs,
+    buildArchitectTimeoutMs: parsePositiveInt(process.env.BUILD_ARCHITECT_TIMEOUT_MS, buildAgentTimeoutMs),
+    buildPermissionsTimeoutMs: parsePositiveInt(process.env.BUILD_PERMISSIONS_TIMEOUT_MS, buildAgentTimeoutMs),
+    buildContentTimeoutMs: parsePositiveInt(process.env.BUILD_CONTENT_TIMEOUT_MS, buildAgentTimeoutMs),
+    buildAssemblerTimeoutMs: parsePositiveInt(process.env.BUILD_ASSEMBLER_TIMEOUT_MS, buildAgentTimeoutMs),
+    buildAgentMaxRetries: Math.max(0, Number.parseInt(process.env.BUILD_AGENT_MAX_RETRIES || '1', 10) || 1),
+    lmStudioTimeoutMs,
+  };
+};
+
+const getEffectiveLmStudioTimeoutMs = (agentTimeoutMs = null) => {
+  const runtimeTimeouts = getRuntimeTimeoutConfig();
+  const minimumTimeoutMs = Number.isFinite(agentTimeoutMs) && agentTimeoutMs > 0 ? agentTimeoutMs : 0;
+  return Math.max(runtimeTimeouts.lmStudioTimeoutMs, minimumTimeoutMs);
+};
+
+const getBuildRuntimeDiagnostics = () => {
+  const runtimeTimeouts = getRuntimeTimeoutConfig();
+
+  return {
+    pipelineMode: runtimeTimeouts.buildPipelineMode,
+    agentDefaultTimeoutMs: runtimeTimeouts.buildAgentTimeoutMs,
+    architectTimeoutMs: runtimeTimeouts.buildArchitectTimeoutMs,
+    permissionsTimeoutMs: runtimeTimeouts.buildPermissionsTimeoutMs,
+    contentTimeoutMs: runtimeTimeouts.buildContentTimeoutMs,
+    assemblerTimeoutMs: runtimeTimeouts.buildAssemblerTimeoutMs,
+    lmStudioTimeoutMs: runtimeTimeouts.lmStudioTimeoutMs,
+    maxRetries: runtimeTimeouts.buildAgentMaxRetries,
+    timeoutMismatch: runtimeTimeouts.lmStudioTimeoutMs < Math.max(
+      runtimeTimeouts.buildArchitectTimeoutMs,
+      runtimeTimeouts.buildPermissionsTimeoutMs,
+      runtimeTimeouts.buildContentTimeoutMs,
+      runtimeTimeouts.buildAssemblerTimeoutMs,
+    ),
+  };
+};
+
 const parseSocialFeeds = () => {
   if (!process.env.SOCIAL_FEEDS_JSON) {
     return [];
@@ -44,17 +102,17 @@ const config = {
   lmStudioBaseUrl: process.env.LMSTUDIO_BASE_URL || 'http://127.0.0.1:1234',
   lmStudioModel: process.env.LMSTUDIO_MODEL || '',
   lmStudioEnabled: String(process.env.LMSTUDIO_ENABLED || 'false').toLowerCase() === 'true',
-  lmStudioTimeoutMs: Number.parseInt(process.env.LMSTUDIO_TIMEOUT_MS || '180000', 10),
-  buildPipelineMode: String(process.env.BUILD_PIPELINE_MODE || 'single').trim().toLowerCase(),
-  buildAgentTimeoutMs: Number.parseInt(process.env.BUILD_AGENT_TIMEOUT_MS || '900000', 10),
-  buildArchitectTimeoutMs: Number.parseInt(process.env.BUILD_ARCHITECT_TIMEOUT_MS || '', 10),
-  buildPermissionsTimeoutMs: Number.parseInt(process.env.BUILD_PERMISSIONS_TIMEOUT_MS || '', 10),
-  buildContentTimeoutMs: Number.parseInt(process.env.BUILD_CONTENT_TIMEOUT_MS || '', 10),
-  buildAssemblerTimeoutMs: Number.parseInt(process.env.BUILD_ASSEMBLER_TIMEOUT_MS || '', 10),
-  buildAgentMaxRetries: Number.parseInt(process.env.BUILD_AGENT_MAX_RETRIES || '1', 10),
+  lmStudioTimeoutMs: getRuntimeTimeoutConfig().lmStudioTimeoutMs,
+  buildPipelineMode: getRuntimeTimeoutConfig().buildPipelineMode,
+  buildAgentTimeoutMs: getRuntimeTimeoutConfig().buildAgentTimeoutMs,
+  buildArchitectTimeoutMs: getRuntimeTimeoutConfig().buildArchitectTimeoutMs,
+  buildPermissionsTimeoutMs: getRuntimeTimeoutConfig().buildPermissionsTimeoutMs,
+  buildContentTimeoutMs: getRuntimeTimeoutConfig().buildContentTimeoutMs,
+  buildAssemblerTimeoutMs: getRuntimeTimeoutConfig().buildAssemblerTimeoutMs,
+  buildAgentMaxRetries: getRuntimeTimeoutConfig().buildAgentMaxRetries,
   aiSkillsEnabled: String(process.env.AI_SKILLS_ENABLED || 'true').toLowerCase() === 'true',
   aiSkillsMaxChars: Number.parseInt(process.env.AI_SKILLS_MAX_CHARS || '12000', 10),
-  aiSkillsMode: String(process.env.AI_SKILLS_MODE || 'compact').trim().toLowerCase(),
+  aiSkillsMode: normalizeAiSkillsMode(process.env.AI_SKILLS_MODE),
   discordTemplateExecutionEnabled: String(process.env.DISCORD_TEMPLATE_EXECUTION_ENABLED || 'false').toLowerCase() === 'true',
   attachmentTextMaxBytes: Number.parseInt(process.env.ATTACHMENT_TEXT_MAX_BYTES || '1048576', 10),
   attachmentFetchTimeoutMs: Number.parseInt(process.env.ATTACHMENT_FETCH_TIMEOUT_MS || '10000', 10),
@@ -87,44 +145,16 @@ if (!Number.isFinite(config.lmStudioTimeoutMs) || config.lmStudioTimeoutMs <= 0)
   config.lmStudioTimeoutMs = 180000;
 }
 
-if (!['single', 'multi'].includes(config.buildPipelineMode)) {
-  config.buildPipelineMode = 'single';
-}
-
-if (!Number.isFinite(config.buildAgentTimeoutMs) || config.buildAgentTimeoutMs <= 0) {
-  config.buildAgentTimeoutMs = 900000;
-}
-
-if (!Number.isFinite(config.buildArchitectTimeoutMs) || config.buildArchitectTimeoutMs <= 0) {
-  config.buildArchitectTimeoutMs = config.buildAgentTimeoutMs;
-}
-
-if (!Number.isFinite(config.buildPermissionsTimeoutMs) || config.buildPermissionsTimeoutMs <= 0) {
-  config.buildPermissionsTimeoutMs = config.buildAgentTimeoutMs;
-}
-
-if (!Number.isFinite(config.buildContentTimeoutMs) || config.buildContentTimeoutMs <= 0) {
-  config.buildContentTimeoutMs = config.buildAgentTimeoutMs;
-}
-
-if (!Number.isFinite(config.buildAssemblerTimeoutMs) || config.buildAssemblerTimeoutMs <= 0) {
-  config.buildAssemblerTimeoutMs = config.buildAgentTimeoutMs;
-}
-
-if (!Number.isFinite(config.buildAgentMaxRetries) || config.buildAgentMaxRetries < 0) {
-  config.buildAgentMaxRetries = 1;
-}
-
 if (!Number.isFinite(config.aiSkillsMaxChars) || config.aiSkillsMaxChars <= 0) {
   config.aiSkillsMaxChars = 12000;
-}
-
-if (!['off', 'minimal', 'compact', 'full'].includes(config.aiSkillsMode)) {
-  config.aiSkillsMode = 'compact';
 }
 
 if (!Number.isFinite(config.attachmentFetchTimeoutMs) || config.attachmentFetchTimeoutMs <= 0) {
   config.attachmentFetchTimeoutMs = 10000;
 }
+
+config.getRuntimeTimeoutConfig = getRuntimeTimeoutConfig;
+config.getEffectiveLmStudioTimeoutMs = getEffectiveLmStudioTimeoutMs;
+config.getBuildRuntimeDiagnostics = getBuildRuntimeDiagnostics;
 
 module.exports = config;
