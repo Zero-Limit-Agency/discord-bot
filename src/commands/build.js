@@ -37,6 +37,13 @@ const {
   normalizeBuildBrief,
   writeNormalizedBriefDebugFile,
 } = require('../services/buildBriefNormalizer');
+const {
+  createBuildJob,
+  getBuildJob,
+  recordBuildProgress,
+  updateBuildJob,
+} = require('../services/buildJobService');
+const { createBuildProgressReporter } = require('../services/buildProgressReporter');
 const fs = require('node:fs');
 const path = require('node:path');
 
@@ -813,10 +820,6 @@ const summarizeFatalError = (error) => ({
   stack: safeString(error?.stack, 'No stack available.'),
 });
 
-const editDeferredReply = async (interaction, payload) => {
-  await interaction.editReply(payload);
-};
-
 const processTemplateCandidate = async (templateObject, rawText) => {
   const normalizedResult = normalizeTemplate(templateObject);
 
@@ -1009,6 +1012,10 @@ module.exports = {
       flags: MessageFlags.Ephemeral,
     });
 
+    const buildRunId = createBuildRunId();
+    let buildJobCreated = false;
+    let progressReporter = null;
+
     try {
       logBuildRuntimeDiagnosticsOnce();
       const runtimeTimeouts = typeof config.getRuntimeTimeoutConfig === 'function'
@@ -1025,6 +1032,21 @@ module.exports = {
       const file = interaction.options.getAttachment('file');
       let attachmentContent = null;
 
+      createBuildJob({
+        runId: buildRunId,
+        userId: interaction.user.id,
+        guildId: interaction.guildId || null,
+        mode: buildPipelineMode,
+        status: 'queued',
+      });
+      buildJobCreated = true;
+      progressReporter = createBuildProgressReporter({
+        interaction,
+        getJob: () => getBuildJob(buildRunId),
+      });
+      await progressReporter.update('queued');
+      progressReporter.start();
+
       if (file) {
         const attachmentResult = await readAttachmentText(file);
 
@@ -1034,16 +1056,19 @@ module.exports = {
             userId: interaction.user.id,
           });
 
-          await editDeferredReply(interaction, {
-            content: 'The attached file could not be read. Use a supported text file under the size limit.',
+          updateBuildJob(buildRunId, {
+            status: 'failed',
+            mainError: 'The attached file could not be read.',
           });
+          await progressReporter.sendFinal({
+            content: 'The attached file could not be read. Use a supported text file under the size limit.',
+          }, `BUILD FAILED\nRun: ${buildRunId}\nThe attached file could not be read.`);
           return;
         }
 
         attachmentContent = attachmentResult;
       }
 
-      const buildRunId = createBuildRunId();
       const briefNormalizationResult = normalizeBuildBrief({
         prompt,
         attachment: attachmentContent,
@@ -1065,6 +1090,14 @@ module.exports = {
         assumptionsCount: Array.isArray(normalizedBrief?.assumptions) ? normalizedBrief.assumptions.length : 0,
         debugFilePath: briefDebugFilePath,
       };
+      updateBuildJob(buildRunId, {
+        status: 'running',
+        briefMode: briefMeta.mode,
+        serverType: briefMeta.serverType,
+        warnings: briefMeta.warning ? [briefMeta.warning] : [],
+        debugFolder: briefDebugFilePath ? path.dirname(briefDebugFilePath) : null,
+      });
+      await progressReporter.update('brief-normalized');
 
       const result = buildLmStudioRequest({
         prompt,
@@ -1079,9 +1112,13 @@ module.exports = {
           userId: interaction.user.id,
         });
 
-        await editDeferredReply(interaction, {
-          content: 'A prompt or a file is required to prepare the build request.',
+        updateBuildJob(buildRunId, {
+          status: 'failed',
+          mainError: 'A prompt or a file is required.',
         });
+        await progressReporter.sendFinal({
+          content: 'A prompt or a file is required to prepare the build request.',
+        }, `BUILD FAILED\nRun: ${buildRunId}\nA prompt or a file is required.`);
         return;
       }
 
@@ -1107,6 +1144,14 @@ module.exports = {
             prompt,
             attachment: attachmentContent,
             normalizedBrief,
+            runId: buildRunId,
+            onProgress: async (event) => {
+              recordBuildProgress(buildRunId, {
+                ...event,
+                debugFolder: event.runDirectoryPath || null,
+              });
+              await progressReporter.update(event.type || 'agent-progress');
+            },
           });
 
           pipelineMeta = {
@@ -1125,13 +1170,25 @@ module.exports = {
             lmStudio.errorMessage = `Agent "${pipelineResult.failedAgent}" failed: ${pipelineResult.error || 'Unknown error'}`;
             lmStudio.jsonExtraction = 'Not attempted';
 
-            await editDeferredReply(interaction, {
+            updateBuildJob(buildRunId, {
+              status: 'failed',
+              currentAgent: null,
+              mainError: lmStudio.errorMessage,
+              debugFolder: pipelineResult.runDirectoryPath || null,
+            });
+            await progressReporter.sendFinal({
               embeds: [createMultiAgentFailureEmbed({
                 failedAgent: pipelineResult.failedAgent,
                 pipelineMeta,
                 lmStudio,
               })],
-            });
+            }, [
+              'BUILD FAILED',
+              `Run: ${buildRunId}`,
+              `Agent: ${pipelineResult.failedAgent || 'unknown'}`,
+              `Cause: ${pipelineResult.error || 'Unknown error'}`,
+              `Debug: ${pipelineResult.runDirectoryPath || 'not available'}`,
+            ].join('\n'));
             return;
           } else {
             lmStudio.success = true;
@@ -1148,6 +1205,13 @@ module.exports = {
           };
           lmStudio.called = true;
 
+          recordBuildProgress(buildRunId, {
+            agent: 'lm-studio',
+            status: 'running',
+            retriesUsed: 0,
+          });
+          await progressReporter.update('lm-studio-start');
+
           const lmStudioResult = await callLmStudio(result.request.requestPayload);
           lmStudio.durationMs = lmStudioResult.durationMs || 0;
 
@@ -1160,12 +1224,22 @@ module.exports = {
               : lmStudioResult.message;
 
             if (lmStudioResult.code === 'TIMEOUT') {
-              await editDeferredReply(interaction, {
-                embeds: [createTimeoutEmbed(result, lmStudio)],
+              updateBuildJob(buildRunId, {
+                status: 'failed',
+                currentAgent: null,
+                mainError: lmStudio.errorMessage,
               });
+              await progressReporter.sendFinal({
+                embeds: [createTimeoutEmbed(result, lmStudio)],
+              }, `BUILD FAILED\nRun: ${buildRunId}\n${lmStudio.errorMessage}`);
               return;
             }
           } else {
+            recordBuildProgress(buildRunId, {
+              agent: 'lm-studio',
+              status: 'completed',
+              retriesUsed: 0,
+            });
             lmStudio.success = true;
             lmStudio.rawResponseDebugFilePath = writeLmStudioRawResponseDebugFile(lmStudioResult.content);
 
@@ -1263,10 +1337,52 @@ module.exports = {
 
       logEmbedsBeforeReply(normalizedEmbeds);
 
+      const finalTemplateStatus = generatedTemplate
+        ? inferTemplateStatus({
+          normalizationWarnings: generatedTemplate.normalizationWarnings || [],
+          repairWarnings: generatedTemplate.repairWarnings || [],
+        }, {
+          blocked: generatedTemplate.valid === false,
+          failed: false,
+        })
+        : (lmStudio.called && !lmStudio.success ? 'failed' : 'valid');
+      const finalDebugFolder = resolveBuildDebugFolder({
+        pipelineMeta,
+        generatedTemplate,
+        buildReport,
+      });
+      updateBuildJob(buildRunId, {
+        status: lmStudio.called && !lmStudio.success ? 'failed' : 'completed',
+        currentAgent: null,
+        mainError: lmStudio.called && !lmStudio.success ? lmStudio.errorMessage : null,
+        debugFolder: finalDebugFolder,
+        templateSlug: buildReport?.previewResult?.slug
+          || (generatedTemplate?.savedPath ? path.basename(generatedTemplate.savedPath, '.json') : null),
+        templateStatus: finalTemplateStatus,
+        warnings: uniqueDiagnostics([
+          ...(generatedTemplate?.normalizationWarnings || []),
+          ...(generatedTemplate?.repairWarnings || []),
+          ...(generatedTemplate?.warnings || []),
+        ]),
+      });
+
       try {
-        await editDeferredReply(interaction, {
+        const delivery = await progressReporter.sendFinal({
           embeds: normalizedEmbeds.slice(0, 5),
-        });
+        }, [
+          'BUILD COMPLETED',
+          `Run: ${buildRunId}`,
+          `Template: ${generatedTemplate?.name || 'not generated'}`,
+          `Status: ${finalTemplateStatus}`,
+          `Debug: ${finalDebugFolder || 'not available'}`,
+        ].join('\n'));
+
+        if (!delivery.delivered) {
+          logger.error('Build completed but final response was not delivered', {
+            runId: buildRunId,
+            debugFolder: finalDebugFolder,
+          });
+        }
       } catch (replyError) {
         logger.error('Failed to send Discord response', {
           command: 'build',
@@ -1274,10 +1390,10 @@ module.exports = {
           stack: replyError.stack,
         });
 
-        await editDeferredReply(interaction, {
+        await progressReporter.sendFinal({
           content: `BUILD CRASH\n${safeString(replyError.message, 'Unknown Discord response error.')}`,
           embeds: [],
-        });
+        }, `BUILD CRASH\nRun: ${buildRunId}\n${safeString(replyError.message, 'Unknown Discord response error.')}`);
       }
     } catch (error) {
       const fatalError = summarizeFatalError(error);
@@ -1294,12 +1410,28 @@ module.exports = {
 
       const crashMessage = `BUILD CRASH\n${fatalError.message}`;
 
+      if (buildJobCreated) {
+        try {
+          updateBuildJob(buildRunId, {
+            status: 'failed',
+            currentAgent: null,
+            mainError: fatalError.message,
+            debugFolder: crashDebugFilePath ? path.dirname(crashDebugFilePath) : null,
+          });
+        } catch (jobError) {
+          logger.error('Failed to persist build crash state', {
+            runId: buildRunId,
+            error: jobError.message,
+          });
+        }
+      }
+
       try {
-        if (interaction.deferred || interaction.replied) {
-          await editDeferredReply(interaction, {
+        if (progressReporter) {
+          await progressReporter.sendFinal({
             content: crashMessage,
             embeds: [],
-          });
+          }, `${crashMessage}\nRun: ${buildRunId}\nDebug: ${crashDebugFilePath || 'not available'}`);
           return;
         }
 
@@ -1314,6 +1446,8 @@ module.exports = {
           stack: responseError.stack,
         });
       }
+    } finally {
+      progressReporter?.stop();
     }
   },
 };

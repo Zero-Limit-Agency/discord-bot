@@ -10,7 +10,8 @@
     "verify-template-fixtures": "node scripts/verifyTemplateFixtures.js",
     "verify-template-execution": "node scripts/verifyTemplateExecution.js",
     "verify-build-briefs": "node scripts/verifyBuildBriefs.js",
-    "verify-build-multi-briefs": "node scripts/verifyBuildMultiBriefs.js"
+    "verify-build-multi-briefs": "node scripts/verifyBuildMultiBriefs.js",
+    "verify-build-resilience": "node scripts/verifyBuildResilience.js"
   },
   "keywords": [
     "discord",
