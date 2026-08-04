@@ -655,6 +655,7 @@ const createBuildEmbed = (result, report = null) => {
   const importantWarnings = uniqueDiagnostics([
     ...attachmentWarnings,
     ...(briefMeta?.warning ? [briefMeta.warning] : []),
+    ...(briefMeta?.contradictions || []),
     ...normalizationWarnings,
     ...repairWarnings,
     ...validationWarnings,
@@ -712,6 +713,7 @@ const createBuildEmbed = (result, report = null) => {
       safeEmbedField('Brief', briefMeta?.mode === 'normalized' ? 'normalized' : 'fallback', true),
       safeEmbedField('Server Type', briefMeta?.serverType || 'general', true),
       safeEmbedField('Assumptions', safeNumberLabel(briefMeta?.assumptionsCount, '0'), true),
+      safeEmbedField('Contradictions', safeNumberLabel(briefMeta?.contradictionsCount, '0'), true),
       safeEmbedField('Warnings', String(countDiagnostics(importantWarnings)), true),
       safeEmbedField(
         'Brief Fidelity',
@@ -741,6 +743,18 @@ const createBuildEmbed = (result, report = null) => {
           `Duration: ${lmStudio.called ? `${safeNumberLabel(lmStudio.durationMs, 'N/A')} ms` : 'Not attempted'}`,
           `JSON Extraction: ${lmStudio.jsonExtraction || 'Not attempted'}`,
         ].join('\n'),
+        false,
+      ),
+      safeEmbedField(
+        'Brief Context',
+        briefMeta?.sourceMetadata
+          ? [
+            `Original: ${safeNumberLabel(briefMeta.sourceMetadata.originalCharacters, '0')} chars`,
+            `Prepared: ${safeNumberLabel(briefMeta.sourceMetadata.preparedCharacters, '0')} chars`,
+            `Duplicates removed: ${safeNumberLabel(briefMeta.sourceMetadata.duplicateChunksRemoved, '0')}`,
+            `Truncated: ${briefMeta.sourceMetadata.truncated ? 'Yes' : 'No'}`,
+          ].join('\n')
+          : 'Not available',
         false,
       ),
       safeEmbedField(
@@ -1105,14 +1119,22 @@ module.exports = {
         metadata: {
           mode: briefNormalizationResult.mode,
           warning: briefNormalizationResult.warning || null,
+          sourceWarnings: briefNormalizationResult.sourceWarnings || [],
+          sourceMetadata: briefNormalizationResult.sourceMetadata || null,
           attachmentPresent: Boolean(attachmentContent),
         },
       });
       const briefMeta = {
         mode: briefNormalizationResult.mode || 'fallback',
-        warning: briefNormalizationResult.warning || null,
+        warning: uniqueDiagnostics([
+          ...(briefNormalizationResult.warning ? [briefNormalizationResult.warning] : []),
+          ...(briefNormalizationResult.sourceWarnings || []),
+        ]).join(' | ') || null,
         serverType: normalizedBrief?.serverType || 'general',
         assumptionsCount: Array.isArray(normalizedBrief?.assumptions) ? normalizedBrief.assumptions.length : 0,
+        contradictionsCount: Array.isArray(normalizedBrief?.contradictions) ? normalizedBrief.contradictions.length : 0,
+        contradictions: normalizedBrief?.contradictions || [],
+        sourceMetadata: briefNormalizationResult.sourceMetadata || null,
         debugFilePath: briefDebugFilePath,
       };
       updateBuildJob(buildRunId, {
@@ -1129,6 +1151,7 @@ module.exports = {
         attachment: attachmentContent,
         requestedBy: interaction.user,
         normalizedBrief,
+        preparedBriefText: briefNormalizationResult.agentSourceText,
       });
 
       if (!result.ok) {
@@ -1169,6 +1192,7 @@ module.exports = {
             prompt,
             attachment: attachmentContent,
             normalizedBrief,
+            preparedBriefText: briefNormalizationResult.agentSourceText,
             runId: buildRunId,
             onProgress: async (event) => {
               recordBuildProgress(buildRunId, {

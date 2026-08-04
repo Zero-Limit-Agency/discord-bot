@@ -1,3 +1,5 @@
+const { createAgentBrief } = require('../buildBriefNormalizer');
+
 const buildPermissionsAgentRequest = ({ architecture, normalizedBrief, model, correctionNote = '' }) => ({
   model,
   temperature: 0.1,
@@ -29,7 +31,7 @@ const buildPermissionsAgentRequest = ({ architecture, normalizedBrief, model, co
         'Architecture JSON:',
         JSON.stringify(architecture, null, 2),
         normalizedBrief ? '\nNormalized brief JSON:' : '',
-        normalizedBrief ? JSON.stringify(normalizedBrief, null, 2) : '',
+        normalizedBrief ? JSON.stringify(createAgentBrief(normalizedBrief), null, 2) : '',
         '',
         'Return this exact JSON shape:',
         '{',

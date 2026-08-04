@@ -1,3 +1,5 @@
+const { createAgentBrief } = require('../buildBriefNormalizer');
+
 const BASE_SYSTEM_LINES = [
   'You are the Architect Agent for Discord server generation.',
   'Return exactly one valid JSON object.',
@@ -23,21 +25,24 @@ const buildArchitectAgentRequest = ({
   skillsBlock,
   model,
   correctionNote = '',
+  preparedBriefText = null,
 }) => {
   const userSections = [];
 
-  if (prompt) {
+  if (preparedBriefText) {
+    userSections.push(`User brief:\n${preparedBriefText}`);
+  } else if (prompt) {
     userSections.push(`User brief:\n${prompt}`);
   }
 
-  if (attachment?.text) {
+  if (attachment?.text && !preparedBriefText) {
     userSections.push(`Attached source content:\n${attachment.text}`);
   }
 
   if (normalizedBrief) {
     userSections.push([
       'Normalized brief JSON:',
-      JSON.stringify(normalizedBrief, null, 2),
+      JSON.stringify(createAgentBrief(normalizedBrief), null, 2),
       '',
       'Use this structured brief to understand audience, goals, roles, areas, constraints, and assumptions.',
       'Respect explicit user constraints and only make reasonable assumptions when required.',

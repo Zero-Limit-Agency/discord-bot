@@ -53,6 +53,16 @@ const readAttachmentText = async (attachment) => {
     }
 
     const text = await response.text();
+    const actualSize = Buffer.byteLength(text, 'utf8');
+
+    if (actualSize > config.attachmentTextMaxBytes) {
+      return {
+        ok: false,
+        code: 'ATTACHMENT_TOO_LARGE',
+        message: 'Attachment exceeds the maximum allowed size.',
+      };
+    }
+
     const warnings = [];
 
     if (!text.trim()) {
@@ -63,7 +73,7 @@ const readAttachmentText = async (attachment) => {
       ok: true,
       filename: attachment.name || 'unknown-file',
       contentType: attachment.contentType || response.headers.get('content-type') || null,
-      size: attachment.size || Buffer.byteLength(text, 'utf8'),
+      size: attachment.size || actualSize,
       text,
       warnings,
     };

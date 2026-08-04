@@ -4,6 +4,7 @@ const config = require('../config');
 const logger = require('../utils/logger');
 const discordTemplateSystemPrompt = require('../prompts/discordTemplateSystemPrompt');
 const { loadAiSkillsBlock } = require('./aiSkillLoader');
+const { createAgentBrief } = require('./buildBriefNormalizer');
 
 const debugDirectoryPath = path.join(process.cwd(), 'debug', 'build-requests');
 const finalPromptDebugDirectoryPath = path.join(process.cwd(), 'debug', 'build-final-prompts');
@@ -77,25 +78,34 @@ const formatNormalizedBriefSection = (normalizedBrief) => {
     return '';
   }
 
+  const agentBrief = createAgentBrief(normalizedBrief);
+
   return [
     'Normalized brief:',
-    `Summary: ${normalizedBrief.summary || 'N/A'}`,
-    `Server Type: ${normalizedBrief.serverType || 'general'}`,
-    `Tone: ${normalizedBrief.tone || 'professional'}`,
-    `Audience: ${(normalizedBrief.audience || []).join(', ') || 'N/A'}`,
-    `Goals: ${(normalizedBrief.goals || []).join(', ') || 'N/A'}`,
-    `Required Areas: ${(normalizedBrief.requiredAreas || []).join(', ') || 'N/A'}`,
-    `Roles Mentioned: ${(normalizedBrief.rolesMentioned || []).join(', ') || 'N/A'}`,
-    `Channels Mentioned: ${(normalizedBrief.channelsMentioned || []).join(', ') || 'N/A'}`,
-    `Permission Hints: ${(normalizedBrief.permissionHints || []).join(', ') || 'N/A'}`,
-    `Onboarding Hints: ${(normalizedBrief.onboardingHints || []).join(', ') || 'N/A'}`,
-    `Support Hints: ${(normalizedBrief.supportHints || []).join(', ') || 'N/A'}`,
-    `Constraints: ${(normalizedBrief.constraints || []).join(' | ') || 'N/A'}`,
-    `Assumptions: ${(normalizedBrief.assumptions || []).join(' | ') || 'N/A'}`,
+    `Summary: ${agentBrief.summary || 'N/A'}`,
+    `Server Type: ${agentBrief.serverType || 'general'}`,
+    `Tone: ${agentBrief.tone || 'professional'}`,
+    `Audience: ${agentBrief.audience.join(', ') || 'N/A'}`,
+    `Goals: ${agentBrief.goals.join(', ') || 'N/A'}`,
+    `Required Areas: ${agentBrief.requiredAreas.join(', ') || 'N/A'}`,
+    `Roles Mentioned: ${agentBrief.rolesMentioned.join(', ') || 'N/A'}`,
+    `Channels Mentioned: ${agentBrief.channelsMentioned.join(', ') || 'N/A'}`,
+    `Permission Hints: ${agentBrief.permissionHints.join(', ') || 'N/A'}`,
+    `Onboarding Hints: ${agentBrief.onboardingHints.join(', ') || 'N/A'}`,
+    `Support Hints: ${agentBrief.supportHints.join(', ') || 'N/A'}`,
+    `Constraints: ${agentBrief.constraints.join(' | ') || 'N/A'}`,
+    `Assumptions: ${agentBrief.assumptions.join(' | ') || 'N/A'}`,
+    `Contradictions: ${agentBrief.contradictions.join(' | ') || 'None detected'}`,
   ].join('\n');
 };
 
-const buildLmStudioRequest = ({ prompt, attachment, requestedBy, normalizedBrief = null }) => {
+const buildLmStudioRequest = ({
+  prompt,
+  attachment,
+  requestedBy,
+  normalizedBrief = null,
+  preparedBriefText = null,
+}) => {
   const normalizedPrompt = sanitizePrompt(prompt);
   const normalizedAttachment = normalizeAttachment(attachment);
 
@@ -109,15 +119,17 @@ const buildLmStudioRequest = ({ prompt, attachment, requestedBy, normalizedBrief
 
   const userContent = [];
   const promptContext = [
-    normalizedPrompt,
-    normalizedAttachment?.filename || '',
-    normalizedAttachment?.text || '',
+    preparedBriefText || normalizedPrompt,
+    preparedBriefText ? '' : (normalizedAttachment?.filename || ''),
+    preparedBriefText ? '' : (normalizedAttachment?.text || ''),
   ].filter(Boolean).join('\n\n');
   const skillsBlock = loadAiSkillsBlock({
     promptContext,
   });
 
-  if (normalizedPrompt) {
+  if (preparedBriefText) {
+    userContent.push(`Source brief:\n${preparedBriefText}`);
+  } else if (normalizedPrompt) {
     userContent.push(`Prompt:\n${normalizedPrompt}`);
   }
 
@@ -134,7 +146,7 @@ const buildLmStudioRequest = ({ prompt, attachment, requestedBy, normalizedBrief
       `- extractedCharacters: ${normalizedAttachment.text.length}`,
     ].join('\n'));
 
-    if (normalizedAttachment.text) {
+    if (normalizedAttachment.text && !preparedBriefText) {
       userContent.push(`Attached file content:\n${normalizedAttachment.text}`);
     }
   }

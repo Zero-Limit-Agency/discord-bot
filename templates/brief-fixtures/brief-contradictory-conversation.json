@@ -1,0 +1,10 @@
+{
+  "name": "brief-contradictory-conversation",
+  "prompt": "Je voudrais une communaute privee et premium avec un accueil propre. Au debut je pensais sans tickets, je ne veux pas de tickets inutiles. Finalement le support est essentiel et il faut un systeme de tickets obligatoire pour les membres VIP. Il faut aussi une zone staff privee et des annonces en lecture seule.",
+  "expected": {
+    "serverType": "premium-community",
+    "requiredAreasIncludes": ["staff-operations", "support", "onboarding", "premium-private"],
+    "permissionHintsIncludes": ["private-staff-areas", "read-only-info", "premium-separation"],
+    "contradictionsMin": 1
+  }
+}

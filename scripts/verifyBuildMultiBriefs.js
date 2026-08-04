@@ -231,6 +231,7 @@ const evaluateBriefFixture = async (fileName) => {
     prompt: fixture.prompt,
     attachment: null,
     normalizedBrief,
+    preparedBriefText: normalization.agentSourceText,
   });
 
   if (!pipelineResult.ok) {

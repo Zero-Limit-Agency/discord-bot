@@ -779,6 +779,7 @@ const runBuildAgentPipeline = async ({
   prompt,
   attachment,
   normalizedBrief = null,
+  preparedBriefText = null,
   runId: requestedRunId = null,
   onProgress = null,
 }) => {
@@ -791,7 +792,7 @@ const runBuildAgentPipeline = async ({
 
   try {
     const skillsBlock = loadAiSkillsBlock({
-      promptContext: buildPromptContext({ prompt, attachment }),
+      promptContext: preparedBriefText || buildPromptContext({ prompt, attachment }),
       mode: 'minimal',
       maxCharacters: Math.min(config.aiSkillsMaxChars, 2000),
     });
@@ -810,6 +811,7 @@ const runBuildAgentPipeline = async ({
         skillsBlock,
         model,
         correctionNote,
+        preparedBriefText,
       }),
       guardOutput: guardArchitectOutput,
       guardContext: {
