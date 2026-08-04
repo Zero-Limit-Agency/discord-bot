@@ -7,6 +7,10 @@ const { buildDiscordPayloadsFromLoaded } = require('../src/services/discordPaylo
 const { buildExecutionPlanFromPayloadResult } = require('../src/services/discordServerOrchestrator');
 const { executeTemplateRunFromPlan } = require('../src/services/discordTemplateRunner');
 const mockAdapter = require('../src/services/executionAdapters/mockDiscordExecutionAdapter');
+const {
+  evaluateBuildTemplateQuality,
+  writeBuildTemplateQualityDebugFile,
+} = require('../src/services/buildTemplateQualityEvaluator');
 
 const fixturesDirectoryPath = path.join(process.cwd(), 'templates', 'brief-fixtures');
 const dryRunDebugDirectoryPath = path.join(process.cwd(), 'debug', 'dry-runs');
@@ -266,9 +270,31 @@ const evaluateBriefFixture = async (fileName) => {
       planResult,
     })
     : ['Final template could not be fully audited because one pipeline stage failed.'];
+  const qualityEvaluation = loadResult.ok
+    ? evaluateBuildTemplateQuality({
+      normalizedBrief,
+      template: loadResult.template,
+    })
+    : null;
+
+  if (qualityEvaluation) {
+    writeBuildTemplateQualityDebugFile({
+      runId: pipelineResult.runId,
+      evaluation: qualityEvaluation,
+    });
+    qualitativeIssues.push(
+      ...qualityEvaluation.warnings,
+      ...qualityEvaluation.missingSignals.map((signal) => `Missing brief signal: ${signal}.`),
+      ...qualityEvaluation.contradictions,
+    );
+  }
 
   if (!['valid', 'repaired'].includes(status)) {
     failures.push(`Expected final status valid/repaired but got "${status}".`);
+  }
+
+  if (qualityEvaluation?.status === 'poor') {
+    failures.push(`Deterministic brief fidelity is poor (${qualityEvaluation.score}/100).`);
   }
 
   return {
@@ -281,6 +307,7 @@ const evaluateBriefFixture = async (fileName) => {
     qualitativeIssues,
     runDirectoryPath: pipelineResult.runDirectoryPath,
     agentRuns: pipelineResult.agentRuns || [],
+    qualityEvaluation,
   };
 };
 
@@ -303,6 +330,9 @@ const main = async () => {
       console.error(`  Warnings: ${summarizeValues(result.warnings)}`);
       console.error(`  Errors: ${summarizeValues(result.errors)}`);
       console.error(`  Quality: ${summarizeValues(result.qualitativeIssues)}`);
+      if (result.qualityEvaluation) {
+        console.error(`  Fidelity: ${result.qualityEvaluation.status} (${result.qualityEvaluation.score}/100)`);
+      }
       continue;
     }
 
@@ -310,6 +340,9 @@ const main = async () => {
     console.log(`  Warnings: ${summarizeValues(result.warnings)}`);
     console.log(`  Errors: ${summarizeValues(result.errors)}`);
     console.log(`  Quality: ${summarizeValues(result.qualitativeIssues)}`);
+    if (result.qualityEvaluation) {
+      console.log(`  Fidelity: ${result.qualityEvaluation.status} (${result.qualityEvaluation.score}/100)`);
+    }
   }
 
   if (hasFailure) {

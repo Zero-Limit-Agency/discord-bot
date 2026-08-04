@@ -44,6 +44,10 @@ const {
   updateBuildJob,
 } = require('../services/buildJobService');
 const { createBuildProgressReporter } = require('../services/buildProgressReporter');
+const {
+  evaluateBuildTemplateQuality,
+  writeBuildTemplateQualityDebugFile,
+} = require('../services/buildTemplateQualityEvaluator');
 const fs = require('node:fs');
 const path = require('node:path');
 
@@ -559,6 +563,7 @@ const summarizeDebugAssets = ({ debugFilePath, finalPromptDebugFilePath, pipelin
     debugFilePath ? 'request' : null,
     finalPromptDebugFilePath ? 'prompt' : null,
     generatedTemplate?.debugFilePath ? 'template' : null,
+    generatedTemplate?.qualityDebugFilePath ? 'quality' : null,
     pipelineMeta?.debugFolderPath ? 'agents' : null,
   ].filter(Boolean);
 
@@ -582,6 +587,7 @@ const trimEmbedFields = (embed, maxFields = 25) => {
 const resolveBuildDebugFolder = ({ pipelineMeta, generatedTemplate, buildReport }) => {
   const candidatePath = pipelineMeta?.debugFolderPath
     || buildReport?.debugReportFilePath
+    || generatedTemplate?.qualityDebugFilePath
     || generatedTemplate?.debugFilePath
     || generatedTemplate?.repairedDebugFilePath
     || generatedTemplate?.normalizedDebugFilePath
@@ -641,6 +647,7 @@ const createBuildEmbed = (result, report = null) => {
   const normalizationWarnings = generatedTemplate?.normalizationWarnings || [];
   const repairWarnings = generatedTemplate?.repairWarnings || [];
   const validationWarnings = generatedTemplate?.warnings || [];
+  const qualityEvaluation = generatedTemplate?.qualityEvaluation || null;
   const draftSaved = generatedTemplate?.saved ? 'Yes' : 'No';
   const draftPath = generatedTemplate?.savedPath || 'Not saved';
   const payloadSummary = report?.payloadResult?.summary;
@@ -651,6 +658,9 @@ const createBuildEmbed = (result, report = null) => {
     ...normalizationWarnings,
     ...repairWarnings,
     ...validationWarnings,
+    ...(qualityEvaluation?.warnings || []),
+    ...(qualityEvaluation?.missingSignals || []).map((signal) => `Missing brief signal: ${signal}.`),
+    ...(qualityEvaluation?.contradictions || []),
     ...(report?.executionPlanResult?.plan?.warnings || []),
     ...(report?.dryRunResult?.dryRun?.warnings || []),
   ]);
@@ -703,6 +713,11 @@ const createBuildEmbed = (result, report = null) => {
       safeEmbedField('Server Type', briefMeta?.serverType || 'general', true),
       safeEmbedField('Assumptions', safeNumberLabel(briefMeta?.assumptionsCount, '0'), true),
       safeEmbedField('Warnings', String(countDiagnostics(importantWarnings)), true),
+      safeEmbedField(
+        'Brief Fidelity',
+        qualityEvaluation ? `${qualityEvaluation.status} (${safeCount(qualityEvaluation.score)}/100)` : 'Not checked',
+        true,
+      ),
       safeEmbedField('Actions Planned', totalActions ? String(totalActions) : 'Not available', true),
       safeEmbedField('Payload Count', totalPayloads ? String(totalPayloads) : 'Not available', true),
       safeEmbedField('Draft Saved', draftSaved, true),
@@ -820,7 +835,7 @@ const summarizeFatalError = (error) => ({
   stack: safeString(error?.stack, 'No stack available.'),
 });
 
-const processTemplateCandidate = async (templateObject, rawText) => {
+const processTemplateCandidate = async (templateObject, rawText, normalizedBrief = null, runId = null) => {
   const normalizedResult = normalizeTemplate(templateObject);
 
   if (!normalizedResult.ok) {
@@ -856,6 +871,14 @@ const processTemplateCandidate = async (templateObject, rawText) => {
   const repairResult = repairTemplate(normalizedTemplate);
   const repairedTemplate = repairResult.ok ? repairResult.repairedTemplate : normalizedTemplate;
   const validation = validateTemplate(repairedTemplate);
+  const qualityEvaluation = evaluateBuildTemplateQuality({
+    normalizedBrief,
+    template: repairedTemplate,
+  });
+  const qualityDebugFilePath = writeBuildTemplateQualityDebugFile({
+    runId,
+    evaluation: qualityEvaluation,
+  });
   const debugGeneratedTemplatePath = writeGeneratedTemplateDebugFile(
     repairedTemplate.name || 'generated-template',
     `${JSON.stringify(repairedTemplate, null, 2)}\n`,
@@ -904,6 +927,8 @@ const processTemplateCandidate = async (templateObject, rawText) => {
     debugFilePath: debugGeneratedTemplatePath,
     normalizedDebugFilePath,
     repairedDebugFilePath,
+    qualityEvaluation,
+    qualityDebugFilePath,
     saved: Boolean(draftSave?.ok),
     savedPath: draftSave?.relativePath || null,
     storeError: draftSave && !draftSave.ok ? 'Valid JSON was generated, but the draft could not be saved.' : null,
@@ -1193,7 +1218,12 @@ module.exports = {
           } else {
             lmStudio.success = true;
             lmStudio.jsonExtraction = 'Success';
-            const processed = await processTemplateCandidate(pipelineResult.finalJson, pipelineResult.finalRaw);
+            const processed = await processTemplateCandidate(
+              pipelineResult.finalJson,
+              pipelineResult.finalRaw,
+              normalizedBrief,
+              buildRunId,
+            );
             generatedTemplate = processed.generatedTemplate;
             buildReport = processed.buildReport;
             result.skillsMeta = pipelineResult.skillsMeta || result.skillsMeta;
@@ -1250,7 +1280,12 @@ module.exports = {
               lmStudio.errorMessage = 'LM Studio did not return usable JSON.';
             } else {
               lmStudio.jsonExtraction = 'Success';
-              const processed = await processTemplateCandidate(extracted.json, extracted.raw);
+              const processed = await processTemplateCandidate(
+                extracted.json,
+                extracted.raw,
+                normalizedBrief,
+                buildRunId,
+              );
               generatedTemplate = processed.generatedTemplate;
               buildReport = processed.buildReport;
             }
@@ -1363,6 +1398,9 @@ module.exports = {
           ...(generatedTemplate?.normalizationWarnings || []),
           ...(generatedTemplate?.repairWarnings || []),
           ...(generatedTemplate?.warnings || []),
+          ...(generatedTemplate?.qualityEvaluation?.warnings || []),
+          ...(generatedTemplate?.qualityEvaluation?.missingSignals || []).map((signal) => `Missing brief signal: ${signal}.`),
+          ...(generatedTemplate?.qualityEvaluation?.contradictions || []),
         ]),
       });
 
