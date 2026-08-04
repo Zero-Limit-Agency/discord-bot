@@ -2,6 +2,8 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { normalizeBuildBrief } = require('../src/services/buildBriefNormalizer');
 const { evaluateBuildTemplateQuality } = require('../src/services/buildTemplateQualityEvaluator');
+const { guardPermissionsOutput } = require('../src/services/buildAgents/schemaGuards');
+const { assembleTemplateLocally } = require('../src/services/buildAgents/assemblerAgent');
 
 const assert = (condition, message) => {
   if (!condition) {
@@ -85,5 +87,42 @@ assert(poorEvaluation.missingSignals.includes('support'), 'Expected missing supp
 assert(poorEvaluation.contradictions.some((item) => item.includes('channel-only voice permission')), 'Expected misplaced role voice permission contradiction.');
 assert(poorEvaluation.warnings.some((item) => item.includes('duplicate name')), 'Expected duplicate role warning.');
 
+const guardedPermissions = guardPermissionsOutput({
+  rolePermissions: [{ roleId: 'staff', permissions: ['view_channel', 'connect', 'speak'] }],
+  channelOverwrites: [{
+    channelId: 'staff-chat',
+    permissions: [{ target: 'staff', allow: ['view_channel', 'connect', 'speak'], deny: [] }],
+  }],
+}, {
+  architecture: {
+    roles: [{ id: 'staff', key: 'staff', name: 'Staff' }],
+    categories: [{ id: 'staff', key: 'staff', name: 'Staff Operations' }],
+    channels: [{ id: 'staff-chat', key: 'staff-chat', name: 'staff-chat', type: 'text', categoryId: 'staff' }],
+  },
+});
+const guardedRolePermissions = guardedPermissions.output.rolePermissions[0].permissions;
+const guardedChannelAllow = guardedPermissions.output.channelOverwrites[0].permissions[0].allow;
+
+assert(!guardedRolePermissions.includes('connect') && !guardedRolePermissions.includes('speak'), 'Expected role voice permissions to be removed.');
+assert(!guardedChannelAllow.includes('connect') && !guardedChannelAllow.includes('speak'), 'Expected text-channel voice permissions to be removed.');
+
+const privateAssembly = assembleTemplateLocally({
+  architecture: {
+    name: 'Protected Staff Hub',
+    description: 'Fixture',
+    roles: [{ id: 'staff', key: 'staff', name: 'Staff' }],
+    categories: [{ id: 'staff', key: 'staff', name: 'Staff Operations' }],
+    channels: [{ id: 'staff-chat', key: 'staff-chat', name: 'staff-chat', type: 'text', categoryId: 'staff' }],
+  },
+  permissions: { rolePermissions: [], channelOverwrites: [] },
+  content: { welcomeEmbeds: [], rules: [], onboardingNotes: [], ticketGuidance: [] },
+});
+const privatePermissions = privateAssembly.template.channels[0].permissions;
+
+assert(privatePermissions.some((entry) => entry.target === '@everyone' && entry.deny.includes('view_channel')), 'Expected inferred private @everyone deny.');
+assert(privatePermissions.some((entry) => entry.target === 'staff' && entry.allow.includes('view_channel')), 'Expected inferred staff access.');
+
 console.log(`[PASS] matching template -> ${goodEvaluation.status} (${goodEvaluation.score}/100)`);
 console.log(`[PASS] contradictory template -> ${poorEvaluation.status} (${poorEvaluation.score}/100)`);
+console.log('[PASS] voice permissions are scoped to voice channels');
+console.log('[PASS] inferred staff channel is protected deterministically');
