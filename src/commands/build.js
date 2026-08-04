@@ -58,6 +58,8 @@ const normalizedTemplateDebugDirectoryPath = path.join(process.cwd(), 'debug', '
 const repairedTemplateDebugDirectoryPath = path.join(process.cwd(), 'debug', 'build-repaired-templates');
 const buildReportDebugDirectoryPath = path.join(process.cwd(), 'debug', 'build-reports');
 const buildCrashDebugDirectoryPath = path.join(process.cwd(), 'debug', 'build-crashes');
+const DISCORD_EMBED_TOTAL_CHARACTER_LIMIT = 6000;
+const BUILD_EMBED_TOTAL_CHARACTER_BUDGET = 5800;
 
 const isProduction = () => process.env.NODE_ENV === 'production';
 
@@ -585,6 +587,138 @@ const trimEmbedFields = (embed, maxFields = 25) => {
   return embed;
 };
 
+const truncateEmbedText = (value, maxLength) => {
+  const normalized = String(value || '');
+
+  if (normalized.length <= maxLength) {
+    return normalized;
+  }
+
+  const suffix = '...';
+  return `${normalized.slice(0, Math.max(0, maxLength - suffix.length))}${suffix}`;
+};
+
+const countEmbedCharacters = (embed) => {
+  const data = embed?.data || {};
+  const fields = Array.isArray(data.fields) ? data.fields : [];
+
+  return [
+    data.title,
+    data.description,
+    data.author?.name,
+    data.footer?.text,
+    ...fields.flatMap((field) => [field?.name, field?.value]),
+  ].reduce((total, value) => total + String(value || '').length, 0);
+};
+
+const countEmbedsCharacters = (embeds) => embeds
+  .reduce((total, embed) => total + countEmbedCharacters(embed), 0);
+
+const prioritizeBuildSummaryFields = (fields) => {
+  const preferredNames = [
+    'Pipeline Mode',
+    'Template Status',
+    'Dry Run Status',
+    'Brief Fidelity',
+    'Actions Planned',
+    'Payload Count',
+    'Draft Saved',
+    'JSON Valid',
+    'Agents',
+    'Main Cause',
+    'Top Diagnostics',
+    'Debug',
+  ];
+  const preferred = preferredNames
+    .map((name) => fields.find((field) => field?.name === name))
+    .filter(Boolean);
+  const remaining = fields.filter((field) => !preferred.includes(field));
+
+  return [...preferred, ...remaining].slice(0, 12);
+};
+
+const compactEmbedComponents = (embed, index) => {
+  const data = embed?.data;
+
+  if (!data) {
+    return embed;
+  }
+
+  if (data.title) {
+    data.title = truncateEmbedText(data.title, 256);
+  }
+
+  if (data.description) {
+    data.description = truncateEmbedText(data.description, index === 0 ? 500 : 320);
+  }
+
+  if (data.author?.name) {
+    data.author.name = truncateEmbedText(data.author.name, 256);
+  }
+
+  if (data.footer?.text) {
+    data.footer.text = truncateEmbedText(data.footer.text, 512);
+  }
+
+  if (Array.isArray(data.fields)) {
+    const selectedFields = index === 0
+      ? prioritizeBuildSummaryFields(data.fields)
+      : data.fields.slice(0, 6);
+
+    data.fields = selectedFields.map((field) => ({
+      ...field,
+      name: truncateEmbedText(field?.name || 'Details', 256),
+      value: truncateEmbedText(field?.value || 'N/A', index === 0 ? 420 : 320),
+    }));
+  }
+
+  return embed;
+};
+
+const fitEmbedsWithinTotalCharacterBudget = (
+  embeds,
+  characterBudget = BUILD_EMBED_TOTAL_CHARACTER_BUDGET,
+) => {
+  let totalCharacters = countEmbedsCharacters(embeds);
+
+  while (totalCharacters > characterBudget) {
+    let longestValue = null;
+
+    embeds.forEach((embed) => {
+      const data = embed?.data;
+
+      if (!data) {
+        return;
+      }
+
+      if (typeof data.description === 'string' && data.description.length > 80) {
+        if (!longestValue || data.description.length > longestValue.value.length) {
+          longestValue = { target: data, key: 'description', value: data.description };
+        }
+      }
+
+      (data.fields || []).forEach((field) => {
+        if (typeof field?.value === 'string' && field.value.length > 80) {
+          if (!longestValue || field.value.length > longestValue.value.length) {
+            longestValue = { target: field, key: 'value', value: field.value };
+          }
+        }
+      });
+    });
+
+    if (!longestValue) {
+      break;
+    }
+
+    const requiredReduction = totalCharacters - characterBudget;
+    const nextLength = Math.max(80, longestValue.value.length - requiredReduction - 3);
+    longestValue.target[longestValue.key] = truncateEmbedText(longestValue.value, nextLength);
+    totalCharacters = countEmbedsCharacters(embeds);
+  }
+
+  return embeds;
+};
+
 const resolveBuildDebugFolder = ({ pipelineMeta, generatedTemplate, buildReport }) => {
   const candidatePath = pipelineMeta?.debugFolderPath
     || buildReport?.debugReportFilePath
@@ -829,6 +963,8 @@ const createBuildEmbed = (result, report = null) => {
 const logEmbedsBeforeReply = (embeds) => {
   logger.info('Build embed payload prepared', {
     embedCount: Array.isArray(embeds) ? embeds.length : 0,
+    embedCharacters: Array.isArray(embeds) ? countEmbedsCharacters(embeds) : 0,
+    embedCharacterLimit: DISCORD_EMBED_TOTAL_CHARACTER_LIMIT,
     embedFieldNames: Array.isArray(embeds)
       ? embeds.map((embed, index) => ({
         index,
@@ -841,7 +977,17 @@ const logEmbedsBeforeReply = (embeds) => {
   });
 };
 
-const normalizeEmbedsForDiscord = (embeds) => (Array.isArray(embeds) ? embeds.map((embed) => trimEmbedFields(embed)) : embeds);
+const normalizeEmbedsForDiscord = (embeds) => {
+  if (!Array.isArray(embeds)) {
+    return embeds;
+  }
+
+  const normalized = embeds
+    .map((embed) => trimEmbedFields(embed))
+    .map((embed, index) => compactEmbedComponents(embed, index));
+
+  return fitEmbedsWithinTotalCharacterBudget(normalized);
+};
 
 const summarizeFatalError = (error) => ({
   name: safeString(error?.name, 'UnknownError'),
@@ -1514,4 +1660,9 @@ module.exports = {
       progressReporter?.stop();
     }
   },
+};
+
+module.exports._test = {
+  countEmbedsCharacters,
+  normalizeEmbedsForDiscord,
 };
