@@ -720,8 +720,11 @@ const fitEmbedsWithinTotalCharacterBudget = (
 };
 
 const resolveBuildDebugFolder = ({ pipelineMeta, generatedTemplate, buildReport }) => {
-  const candidatePath = pipelineMeta?.debugFolderPath
-    || buildReport?.debugReportFilePath
+  if (pipelineMeta?.debugFolderPath) {
+    return pipelineMeta.debugFolderPath;
+  }
+
+  const candidatePath = buildReport?.debugReportFilePath
     || generatedTemplate?.qualityDebugFilePath
     || generatedTemplate?.debugFilePath
     || generatedTemplate?.repairedDebugFilePath
@@ -1665,4 +1668,5 @@ module.exports = {
 module.exports._test = {
   countEmbedsCharacters,
   normalizeEmbedsForDiscord,
+  resolveBuildDebugFolder,
 };

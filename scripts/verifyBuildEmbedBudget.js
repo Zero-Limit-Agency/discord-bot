@@ -1,4 +1,5 @@
 const assert = require('node:assert/strict');
+const path = require('node:path');
 const { EmbedBuilder } = require('discord.js');
 const { _test } = require('../src/commands/build');
 
@@ -25,5 +26,12 @@ assert.equal(normalized.length, 5, 'The final report should retain all summary e
 assert.ok(totalCharacters <= 5800, `Embed report exceeds safe budget: ${totalCharacters}.`);
 assert.equal(normalized.at(-1).data.title, 'BUILD DRY RUN');
 assert.ok(normalized.every((embed) => (embed.data.fields || []).length <= 12));
+
+const runDebugFolder = path.join(process.cwd(), 'debug', 'build-agents', 'run-123');
+assert.equal(_test.resolveBuildDebugFolder({
+  pipelineMeta: { debugFolderPath: runDebugFolder },
+  generatedTemplate: null,
+  buildReport: null,
+}), runDebugFolder, 'A multi-agent job should retain its run-specific debug folder.');
 
 console.log(`Build embed budget verification passed (${totalCharacters}/5800 characters).`);
