@@ -16,6 +16,7 @@ const {
 } = require('./schemaGuards');
 
 const debugDirectoryPath = path.join(process.cwd(), 'debug', 'build-agents');
+const transportRetryDelayMs = 3000;
 let hasLoggedBuildRuntimeDiagnostics = false;
 
 const isProduction = () => process.env.NODE_ENV === 'production';
@@ -185,6 +186,8 @@ const summarizeError = (error, fallback) => {
   return fallback;
 };
 
+const wait = (durationMs) => new Promise((resolve) => setTimeout(resolve, durationMs));
+
 const emitBuildProgress = async (onProgress, event) => {
   if (typeof onProgress !== 'function') {
     return;
@@ -316,6 +319,7 @@ const runAgent = async ({
         error: errorMessage,
         timeout: response.code === 'TIMEOUT',
         extractionMode: response.code === 'TIMEOUT' ? 'timeout' : 'request-error',
+        requestCode: response.code,
       });
     }
 
@@ -650,6 +654,9 @@ const runGuardedAgent = async ({
 
       retriesUsed += 1;
       correctionNote = createCorrectionNote(agent, result);
+      const retryDelayMs = result.extractionMode === 'request-error'
+        ? transportRetryDelayMs
+        : 0;
       await emitBuildProgress(onProgress, {
         type: 'agent-retry',
         agent,
@@ -659,8 +666,17 @@ const runGuardedAgent = async ({
         timeoutMs,
         durationMs: result.durationMs,
         error: result.error,
+        retryDelayMs,
         runDirectoryPath,
       });
+      if (retryDelayMs > 0) {
+        logger.info('Build agent retry delayed after transport error', {
+          agent,
+          retryDelayMs,
+          requestCode: result.requestCode || 'REQUEST_FAILED',
+        });
+        await wait(retryDelayMs);
+      }
       continue;
     }
 
