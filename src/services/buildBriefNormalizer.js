@@ -6,6 +6,10 @@ const debugDirectoryPath = path.join(process.cwd(), 'debug', 'build-briefs');
 
 const isProduction = () => process.env.NODE_ENV === 'production';
 const isNonEmptyString = (value) => typeof value === 'string' && value.trim().length > 0;
+const normalizeForDetection = (value) => String(value || '')
+  .normalize('NFD')
+  .replace(/[\u0300-\u036f]/g, '')
+  .toLowerCase();
 
 const uniqueStrings = (values = []) => {
   const seen = new Set();
@@ -138,7 +142,7 @@ const splitSentences = (text) => String(text || '')
   .filter(Boolean);
 
 const detectServerType = (text) => {
-  const normalized = String(text || '').toLowerCase();
+  const normalized = normalizeForDetection(text);
 
   if (/(esport|scrim|tournoi|tournament|team|joueur|player)/.test(normalized)) {
     return 'esports';
@@ -165,7 +169,7 @@ const detectServerType = (text) => {
 
 const extractMatches = (text, patterns) => uniqueStrings(
   patterns
-    .filter(({ regex }) => regex.test(text))
+    .filter(({ regex }) => regex.test(text) || regex.test(normalizeForDetection(text)))
     .map(({ value }) => value),
 );
 
@@ -221,7 +225,7 @@ const detectGoals = (text) => extractMatches(text, [
 ]);
 
 const detectTone = (text) => {
-  const normalized = String(text || '').toLowerCase();
+  const normalized = normalizeForDetection(text);
 
   if (/(premium|high-end|haut de gamme|luxueux)/.test(normalized)) {
     return 'premium';
@@ -260,7 +264,7 @@ const detectSupportHints = (text) => extractMatches(text, [
 
 const detectConstraints = (text) => {
   const constraints = [];
-  const normalized = String(text || '').toLowerCase();
+  const normalized = normalizeForDetection(text);
   const sentences = splitSentences(text);
 
   if (/(no local|zero local|0 local)/.test(normalized)) {
@@ -285,7 +289,7 @@ const detectConstraints = (text) => {
 };
 
 const detectContradictions = (text) => {
-  const normalized = String(text || '').toLowerCase();
+  const normalized = normalizeForDetection(text);
   const contradictions = [];
   const hasBoth = (negativePattern, positivePattern, message) => {
     if (negativePattern.test(normalized) && positivePattern.test(normalized)) {

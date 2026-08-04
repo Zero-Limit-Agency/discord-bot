@@ -159,3 +159,18 @@ if (serializedArchitectRequest.includes('originalPrompt') || serializedArchitect
 } else {
   console.log('[PASS] architect request uses compact source without serialized originalPrompt');
 }
+
+const accentedFrenchBrief = normalizeBuildBrief({
+  prompt: 'Je crée une communauté privée pour des créateurs. Il faut des règles, un accès VIP et un accueil soigné.',
+  attachment: null,
+}).normalizedBrief;
+
+if (accentedFrenchBrief.serverType !== 'content-creator'
+  || !accentedFrenchBrief.requiredAreas.includes('onboarding')
+  || !accentedFrenchBrief.requiredAreas.includes('premium-private')
+  || !accentedFrenchBrief.permissionHints.includes('private-staff-areas')) {
+  console.error('[FAIL] correctly accented French brief lost important signals.');
+  process.exitCode = 1;
+} else {
+  console.log('[PASS] correctly accented French brief preserves creator, onboarding and private signals');
+}
