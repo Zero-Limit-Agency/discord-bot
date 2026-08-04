@@ -1,6 +1,7 @@
 node_modules
 .env
 .data/
+debug/
 debug/generated-payloads/
 debug/execution-plans/
 debug/simulations/

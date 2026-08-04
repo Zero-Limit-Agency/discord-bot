@@ -12,7 +12,8 @@
     "verify-build-briefs": "node scripts/verifyBuildBriefs.js",
     "verify-build-multi-briefs": "node scripts/verifyBuildMultiBriefs.js",
     "verify-build-resilience": "node scripts/verifyBuildResilience.js",
-    "verify-build-quality": "node scripts/verifyBuildQuality.js"
+    "verify-build-quality": "node scripts/verifyBuildQuality.js",
+    "verify-safe": "node --check src/index.js && node --check src/commands/build.js && node --check src/commands/templateCreate.js && node --check src/services/buildAgents/buildAgentPipeline.js && node --check src/services/discordPayloadBuilder.js && node --check src/services/discordTemplateRunner.js && npm run verify-build-resilience && npm run verify-build-quality && npm run verify-build-briefs && npm run verify-template-fixtures && npm run verify-template-execution"
   },
   "keywords": [
     "discord",
