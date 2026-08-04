@@ -313,11 +313,23 @@ const evaluateBriefFixture = async (fileName) => {
 };
 
 const main = async () => {
-  const fixtureFiles = [
+  const availableFixtureFiles = [
     'brief-long-esport-messy.json',
     'brief-content-creator.json',
     'brief-premium-private.json',
   ];
+  const requestedFixtureFiles = process.argv.slice(2);
+  const unknownFixtureFiles = requestedFixtureFiles.filter(
+    (fileName) => !availableFixtureFiles.includes(fileName),
+  );
+
+  if (unknownFixtureFiles.length) {
+    throw new Error(`Unknown multi-brief fixture(s): ${unknownFixtureFiles.join(', ')}`);
+  }
+
+  const fixtureFiles = requestedFixtureFiles.length
+    ? requestedFixtureFiles
+    : availableFixtureFiles;
   let hasFailure = false;
 
   for (const fileName of fixtureFiles) {

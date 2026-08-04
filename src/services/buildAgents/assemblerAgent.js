@@ -330,29 +330,51 @@ const ensureInferredPrivateOverwrites = (channels, categories, roles, warnings) 
     }
 
     const existingPermissions = safeArray(channel.permissions);
-    const deniesEveryone = existingPermissions.some((permission) => (
-      normalizeIdentifier(permission.target) === '@everyone'
-      && (safeArray(permission.deny).includes('view_channel') || safeArray(permission.deny).includes('connect'))
-    ));
+    const everyoneOverwriteIndex = existingPermissions.findIndex(
+      (permission) => normalizeIdentifier(permission.target) === '@everyone',
+    );
+    const requiredEveryoneDeny = channel.type === 'voice'
+      ? ['view_channel', 'connect']
+      : ['view_channel'];
+    const deniesEveryone = everyoneOverwriteIndex !== -1
+      && requiredEveryoneDeny.every(
+        (permission) => safeArray(existingPermissions[everyoneOverwriteIndex].deny).includes(permission),
+      );
     const canInferPrivateAccess = expectedRole !== 'creator'
       && /(staff|admin|mod|vip|premium|private|player|team|roster|scrim|tournament|tryout)/.test(contextText);
 
     if (canInferPrivateAccess && !deniesEveryone) {
-      const deny = channel.type === 'voice'
-        ? ['view_channel', 'connect']
-        : ['view_channel'];
-      channel.permissions = existingPermissions.concat([{
-        target: '@everyone',
-        allow: [],
-        deny,
-      }]);
+      if (everyoneOverwriteIndex === -1) {
+        channel.permissions = existingPermissions.concat([{
+          target: '@everyone',
+          allow: [],
+          deny: requiredEveryoneDeny,
+        }]);
+      } else {
+        channel.permissions = existingPermissions.map((permission, index) => {
+          if (index !== everyoneOverwriteIndex) {
+            return permission;
+          }
+
+          return {
+            ...permission,
+            allow: safeArray(permission.allow).filter(
+              (allowedPermission) => !requiredEveryoneDeny.includes(allowedPermission),
+            ),
+            deny: Array.from(new Set([
+              ...safeArray(permission.deny),
+              ...requiredEveryoneDeny,
+            ])),
+          };
+        });
+      }
       warnings.push(`Assembler protected inferred private channel "${channel.id || channel.key || channel.name}" from @everyone.`);
     }
 
     const effectivePermissions = safeArray(channel.permissions);
     const effectiveDeniesEveryone = effectivePermissions.some((permission) => (
       normalizeIdentifier(permission.target) === '@everyone'
-      && (safeArray(permission.deny).includes('view_channel') || safeArray(permission.deny).includes('connect'))
+      && safeArray(permission.deny).includes('view_channel')
     ));
     const effectiveExpectedRoleAllowed = effectivePermissions.some((permission) => (
       normalizeIdentifier(permission.target) === expectedRole
