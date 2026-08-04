@@ -8,6 +8,71 @@ const extractContentFromResponse = (payload) => {
   return typeof content === 'string' ? content : '';
 };
 
+const extractContentFromStreamPayload = (payload) => {
+  const content = payload?.choices?.[0]?.delta?.content
+    ?? payload?.choices?.[0]?.message?.content;
+  return typeof content === 'string' ? content : '';
+};
+
+const readStreamingContent = async (response) => {
+  if (!response.body || typeof response.body.getReader !== 'function') {
+    return '';
+  }
+
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = '';
+  let content = '';
+
+  const consumeLine = (line) => {
+    const trimmed = line.trim();
+
+    if (!trimmed.startsWith('data:')) {
+      return;
+    }
+
+    const data = trimmed.slice(5).trim();
+
+    if (!data || data === '[DONE]') {
+      return;
+    }
+
+    try {
+      content += extractContentFromStreamPayload(JSON.parse(data));
+    } catch (error) {
+      // Ignore malformed event lines; final empty-content validation still fails safely.
+    }
+  };
+
+  while (true) {
+    const { done, value } = await reader.read();
+    buffer += decoder.decode(value || new Uint8Array(), { stream: !done });
+    const lines = buffer.split(/\r?\n/);
+    buffer = lines.pop() || '';
+    lines.forEach(consumeLine);
+
+    if (done) {
+      break;
+    }
+  }
+
+  if (buffer.trim()) {
+    consumeLine(buffer);
+  }
+
+  return content;
+};
+
+const readResponseContent = async (response, streamingRequested) => {
+  const contentType = String(response.headers?.get?.('content-type') || '').toLowerCase();
+
+  if (streamingRequested && contentType.includes('text/event-stream')) {
+    return readStreamingContent(response);
+  }
+
+  return extractContentFromResponse(await response.json());
+};
+
 const callLmStudio = async (requestPayload, options = {}) => {
   const startedAt = Date.now();
   const controller = new AbortController();
@@ -20,6 +85,7 @@ const callLmStudio = async (requestPayload, options = {}) => {
   const timeoutMs = typeof config.getEffectiveLmStudioTimeoutMs === 'function'
     ? config.getEffectiveLmStudioTimeoutMs(requestedTimeoutMs)
     : (requestedTimeoutMs || runtimeTimeouts.lmStudioTimeoutMs);
+  const streamingRequested = requestPayload?.stream !== false;
   const timeout = setTimeout(() => controller.abort(), timeoutMs);
 
   try {
@@ -28,13 +94,16 @@ const callLmStudio = async (requestPayload, options = {}) => {
       headers: {
         'Content-Type': 'application/json',
       },
-      body: JSON.stringify(requestPayload),
+      body: JSON.stringify({
+        ...requestPayload,
+        stream: streamingRequested,
+      }),
       signal: controller.signal,
     });
 
-    const durationMs = getRequestDurationMs(startedAt);
-
     if (!response.ok) {
+      const durationMs = getRequestDurationMs(startedAt);
+
       logger.warn('LM Studio request failed', {
         status: response.status,
         durationMs,
@@ -50,8 +119,8 @@ const callLmStudio = async (requestPayload, options = {}) => {
       };
     }
 
-    const payload = await response.json();
-    const content = extractContentFromResponse(payload);
+    const content = await readResponseContent(response, streamingRequested);
+    const durationMs = getRequestDurationMs(startedAt);
 
     if (!content) {
       logger.warn('LM Studio response content missing', {
@@ -69,6 +138,7 @@ const callLmStudio = async (requestPayload, options = {}) => {
 
     logger.info('LM Studio request completed', {
       durationMs,
+      streaming: streamingRequested,
     });
 
     return {
@@ -113,4 +183,5 @@ const callLmStudio = async (requestPayload, options = {}) => {
 
 module.exports = {
   callLmStudio,
+  readStreamingContent,
 };
