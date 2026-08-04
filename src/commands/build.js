@@ -3,6 +3,7 @@ const {
   MessageFlags,
   SlashCommandBuilder,
 } = require('discord.js');
+const { randomUUID } = require('node:crypto');
 const config = require('../config');
 const { isStaffMember } = require('../utils/permissions');
 const logger = require('../utils/logger');
@@ -37,6 +38,17 @@ const {
   normalizeBuildBrief,
   writeNormalizedBriefDebugFile,
 } = require('../services/buildBriefNormalizer');
+const {
+  createBuildJob,
+  getBuildJob,
+  recordBuildProgress,
+  updateBuildJob,
+} = require('../services/buildJobService');
+const { createBuildProgressReporter } = require('../services/buildProgressReporter');
+const {
+  evaluateBuildTemplateQuality,
+  writeBuildTemplateQualityDebugFile,
+} = require('../services/buildTemplateQualityEvaluator');
 const fs = require('node:fs');
 const path = require('node:path');
 
@@ -46,6 +58,8 @@ const normalizedTemplateDebugDirectoryPath = path.join(process.cwd(), 'debug', '
 const repairedTemplateDebugDirectoryPath = path.join(process.cwd(), 'debug', 'build-repaired-templates');
 const buildReportDebugDirectoryPath = path.join(process.cwd(), 'debug', 'build-reports');
 const buildCrashDebugDirectoryPath = path.join(process.cwd(), 'debug', 'build-crashes');
+const DISCORD_EMBED_TOTAL_CHARACTER_LIMIT = 6000;
+const BUILD_EMBED_TOTAL_CHARACTER_BUDGET = 5800;
 
 const isProduction = () => process.env.NODE_ENV === 'production';
 
@@ -284,7 +298,7 @@ const writeBuildCrashDebugFile = (error) => {
   return filePath;
 };
 
-const createBuildRunId = () => new Date().toISOString().replace(/[:.]/g, '-');
+const createBuildRunId = () => `${new Date().toISOString().replace(/[:.]/g, '-')}-${randomUUID().slice(0, 8)}`;
 
 const safeCount = (value, fallback = 0) => {
   if (Number.isFinite(value)) {
@@ -552,6 +566,7 @@ const summarizeDebugAssets = ({ debugFilePath, finalPromptDebugFilePath, pipelin
     debugFilePath ? 'request' : null,
     finalPromptDebugFilePath ? 'prompt' : null,
     generatedTemplate?.debugFilePath ? 'template' : null,
+    generatedTemplate?.qualityDebugFilePath ? 'quality' : null,
     pipelineMeta?.debugFolderPath ? 'agents' : null,
   ].filter(Boolean);
 
@@ -572,9 +587,145 @@ const trimEmbedFields = (embed, maxFields = 25) => {
   return embed;
 };
 
+const truncateEmbedText = (value, maxLength) => {
+  const normalized = String(value || '');
+
+  if (normalized.length <= maxLength) {
+    return normalized;
+  }
+
+  const suffix = '...';
+  return `${normalized.slice(0, Math.max(0, maxLength - suffix.length))}${suffix}`;
+};
+
+const countEmbedCharacters = (embed) => {
+  const data = embed?.data || {};
+  const fields = Array.isArray(data.fields) ? data.fields : [];
+
+  return [
+    data.title,
+    data.description,
+    data.author?.name,
+    data.footer?.text,
+    ...fields.flatMap((field) => [field?.name, field?.value]),
+  ].reduce((total, value) => total + String(value || '').length, 0);
+};
+
+const countEmbedsCharacters = (embeds) => embeds
+  .reduce((total, embed) => total + countEmbedCharacters(embed), 0);
+
+const prioritizeBuildSummaryFields = (fields) => {
+  const preferredNames = [
+    'Pipeline Mode',
+    'Template Status',
+    'Dry Run Status',
+    'Brief Fidelity',
+    'Actions Planned',
+    'Payload Count',
+    'Draft Saved',
+    'JSON Valid',
+    'Agents',
+    'Main Cause',
+    'Top Diagnostics',
+    'Debug',
+  ];
+  const preferred = preferredNames
+    .map((name) => fields.find((field) => field?.name === name))
+    .filter(Boolean);
+  const remaining = fields.filter((field) => !preferred.includes(field));
+
+  return [...preferred, ...remaining].slice(0, 12);
+};
+
+const compactEmbedComponents = (embed, index) => {
+  const data = embed?.data;
+
+  if (!data) {
+    return embed;
+  }
+
+  if (data.title) {
+    data.title = truncateEmbedText(data.title, 256);
+  }
+
+  if (data.description) {
+    data.description = truncateEmbedText(data.description, index === 0 ? 500 : 320);
+  }
+
+  if (data.author?.name) {
+    data.author.name = truncateEmbedText(data.author.name, 256);
+  }
+
+  if (data.footer?.text) {
+    data.footer.text = truncateEmbedText(data.footer.text, 512);
+  }
+
+  if (Array.isArray(data.fields)) {
+    const selectedFields = index === 0
+      ? prioritizeBuildSummaryFields(data.fields)
+      : data.fields.slice(0, 6);
+
+    data.fields = selectedFields.map((field) => ({
+      ...field,
+      name: truncateEmbedText(field?.name || 'Details', 256),
+      value: truncateEmbedText(field?.value || 'N/A', index === 0 ? 420 : 320),
+    }));
+  }
+
+  return embed;
+};
+
+const fitEmbedsWithinTotalCharacterBudget = (
+  embeds,
+  characterBudget = BUILD_EMBED_TOTAL_CHARACTER_BUDGET,
+) => {
+  let totalCharacters = countEmbedsCharacters(embeds);
+
+  while (totalCharacters > characterBudget) {
+    let longestValue = null;
+
+    embeds.forEach((embed) => {
+      const data = embed?.data;
+
+      if (!data) {
+        return;
+      }
+
+      if (typeof data.description === 'string' && data.description.length > 80) {
+        if (!longestValue || data.description.length > longestValue.value.length) {
+          longestValue = { target: data, key: 'description', value: data.description };
+        }
+      }
+
+      (data.fields || []).forEach((field) => {
+        if (typeof field?.value === 'string' && field.value.length > 80) {
+          if (!longestValue || field.value.length > longestValue.value.length) {
+            longestValue = { target: field, key: 'value', value: field.value };
+          }
+        }
+      });
+    });
+
+    if (!longestValue) {
+      break;
+    }
+
+    const requiredReduction = totalCharacters - characterBudget;
+    const nextLength = Math.max(80, longestValue.value.length - requiredReduction - 3);
+    longestValue.target[longestValue.key] = truncateEmbedText(longestValue.value, nextLength);
+    totalCharacters = countEmbedsCharacters(embeds);
+  }
+
+  return embeds;
+};
+
 const resolveBuildDebugFolder = ({ pipelineMeta, generatedTemplate, buildReport }) => {
-  const candidatePath = pipelineMeta?.debugFolderPath
-    || buildReport?.debugReportFilePath
+  if (pipelineMeta?.debugFolderPath) {
+    return pipelineMeta.debugFolderPath;
+  }
+
+  const candidatePath = buildReport?.debugReportFilePath
+    || generatedTemplate?.qualityDebugFilePath
     || generatedTemplate?.debugFilePath
     || generatedTemplate?.repairedDebugFilePath
     || generatedTemplate?.normalizedDebugFilePath
@@ -634,6 +785,7 @@ const createBuildEmbed = (result, report = null) => {
   const normalizationWarnings = generatedTemplate?.normalizationWarnings || [];
   const repairWarnings = generatedTemplate?.repairWarnings || [];
   const validationWarnings = generatedTemplate?.warnings || [];
+  const qualityEvaluation = generatedTemplate?.qualityEvaluation || null;
   const draftSaved = generatedTemplate?.saved ? 'Yes' : 'No';
   const draftPath = generatedTemplate?.savedPath || 'Not saved';
   const payloadSummary = report?.payloadResult?.summary;
@@ -641,9 +793,13 @@ const createBuildEmbed = (result, report = null) => {
   const importantWarnings = uniqueDiagnostics([
     ...attachmentWarnings,
     ...(briefMeta?.warning ? [briefMeta.warning] : []),
+    ...(briefMeta?.contradictions || []),
     ...normalizationWarnings,
     ...repairWarnings,
     ...validationWarnings,
+    ...(qualityEvaluation?.warnings || []),
+    ...(qualityEvaluation?.missingSignals || []).map((signal) => `Missing brief signal: ${signal}.`),
+    ...(qualityEvaluation?.contradictions || []),
     ...(report?.executionPlanResult?.plan?.warnings || []),
     ...(report?.dryRunResult?.dryRun?.warnings || []),
   ]);
@@ -695,7 +851,13 @@ const createBuildEmbed = (result, report = null) => {
       safeEmbedField('Brief', briefMeta?.mode === 'normalized' ? 'normalized' : 'fallback', true),
       safeEmbedField('Server Type', briefMeta?.serverType || 'general', true),
       safeEmbedField('Assumptions', safeNumberLabel(briefMeta?.assumptionsCount, '0'), true),
+      safeEmbedField('Contradictions', safeNumberLabel(briefMeta?.contradictionsCount, '0'), true),
       safeEmbedField('Warnings', String(countDiagnostics(importantWarnings)), true),
+      safeEmbedField(
+        'Brief Fidelity',
+        qualityEvaluation ? `${qualityEvaluation.status} (${safeCount(qualityEvaluation.score)}/100)` : 'Not checked',
+        true,
+      ),
       safeEmbedField('Actions Planned', totalActions ? String(totalActions) : 'Not available', true),
       safeEmbedField('Payload Count', totalPayloads ? String(totalPayloads) : 'Not available', true),
       safeEmbedField('Draft Saved', draftSaved, true),
@@ -719,6 +881,18 @@ const createBuildEmbed = (result, report = null) => {
           `Duration: ${lmStudio.called ? `${safeNumberLabel(lmStudio.durationMs, 'N/A')} ms` : 'Not attempted'}`,
           `JSON Extraction: ${lmStudio.jsonExtraction || 'Not attempted'}`,
         ].join('\n'),
+        false,
+      ),
+      safeEmbedField(
+        'Brief Context',
+        briefMeta?.sourceMetadata
+          ? [
+            `Original: ${safeNumberLabel(briefMeta.sourceMetadata.originalCharacters, '0')} chars`,
+            `Prepared: ${safeNumberLabel(briefMeta.sourceMetadata.preparedCharacters, '0')} chars`,
+            `Duplicates removed: ${safeNumberLabel(briefMeta.sourceMetadata.duplicateChunksRemoved, '0')}`,
+            `Truncated: ${briefMeta.sourceMetadata.truncated ? 'Yes' : 'No'}`,
+          ].join('\n')
+          : 'Not available',
         false,
       ),
       safeEmbedField(
@@ -792,6 +966,8 @@ const createBuildEmbed = (result, report = null) => {
 const logEmbedsBeforeReply = (embeds) => {
   logger.info('Build embed payload prepared', {
     embedCount: Array.isArray(embeds) ? embeds.length : 0,
+    embedCharacters: Array.isArray(embeds) ? countEmbedsCharacters(embeds) : 0,
+    embedCharacterLimit: DISCORD_EMBED_TOTAL_CHARACTER_LIMIT,
     embedFieldNames: Array.isArray(embeds)
       ? embeds.map((embed, index) => ({
         index,
@@ -804,7 +980,17 @@ const logEmbedsBeforeReply = (embeds) => {
   });
 };
 
-const normalizeEmbedsForDiscord = (embeds) => (Array.isArray(embeds) ? embeds.map((embed) => trimEmbedFields(embed)) : embeds);
+const normalizeEmbedsForDiscord = (embeds) => {
+  if (!Array.isArray(embeds)) {
+    return embeds;
+  }
+
+  const normalized = embeds
+    .map((embed) => trimEmbedFields(embed))
+    .map((embed, index) => compactEmbedComponents(embed, index));
+
+  return fitEmbedsWithinTotalCharacterBudget(normalized);
+};
 
 const summarizeFatalError = (error) => ({
   name: safeString(error?.name, 'UnknownError'),
@@ -813,11 +999,7 @@ const summarizeFatalError = (error) => ({
   stack: safeString(error?.stack, 'No stack available.'),
 });
 
-const editDeferredReply = async (interaction, payload) => {
-  await interaction.editReply(payload);
-};
-
-const processTemplateCandidate = async (templateObject, rawText) => {
+const processTemplateCandidate = async (templateObject, rawText, normalizedBrief = null, runId = null) => {
   const normalizedResult = normalizeTemplate(templateObject);
 
   if (!normalizedResult.ok) {
@@ -853,6 +1035,14 @@ const processTemplateCandidate = async (templateObject, rawText) => {
   const repairResult = repairTemplate(normalizedTemplate);
   const repairedTemplate = repairResult.ok ? repairResult.repairedTemplate : normalizedTemplate;
   const validation = validateTemplate(repairedTemplate);
+  const qualityEvaluation = evaluateBuildTemplateQuality({
+    normalizedBrief,
+    template: repairedTemplate,
+  });
+  const qualityDebugFilePath = writeBuildTemplateQualityDebugFile({
+    runId,
+    evaluation: qualityEvaluation,
+  });
   const debugGeneratedTemplatePath = writeGeneratedTemplateDebugFile(
     repairedTemplate.name || 'generated-template',
     `${JSON.stringify(repairedTemplate, null, 2)}\n`,
@@ -901,6 +1091,8 @@ const processTemplateCandidate = async (templateObject, rawText) => {
     debugFilePath: debugGeneratedTemplatePath,
     normalizedDebugFilePath,
     repairedDebugFilePath,
+    qualityEvaluation,
+    qualityDebugFilePath,
     saved: Boolean(draftSave?.ok),
     savedPath: draftSave?.relativePath || null,
     storeError: draftSave && !draftSave.ok ? 'Valid JSON was generated, but the draft could not be saved.' : null,
@@ -1009,6 +1201,10 @@ module.exports = {
       flags: MessageFlags.Ephemeral,
     });
 
+    const buildRunId = createBuildRunId();
+    let buildJobCreated = false;
+    let progressReporter = null;
+
     try {
       logBuildRuntimeDiagnosticsOnce();
       const runtimeTimeouts = typeof config.getRuntimeTimeoutConfig === 'function'
@@ -1025,6 +1221,21 @@ module.exports = {
       const file = interaction.options.getAttachment('file');
       let attachmentContent = null;
 
+      createBuildJob({
+        runId: buildRunId,
+        userId: interaction.user.id,
+        guildId: interaction.guildId || null,
+        mode: buildPipelineMode,
+        status: 'queued',
+      });
+      buildJobCreated = true;
+      progressReporter = createBuildProgressReporter({
+        interaction,
+        getJob: () => getBuildJob(buildRunId),
+      });
+      await progressReporter.update('queued');
+      progressReporter.start();
+
       if (file) {
         const attachmentResult = await readAttachmentText(file);
 
@@ -1034,16 +1245,19 @@ module.exports = {
             userId: interaction.user.id,
           });
 
-          await editDeferredReply(interaction, {
-            content: 'The attached file could not be read. Use a supported text file under the size limit.',
+          updateBuildJob(buildRunId, {
+            status: 'failed',
+            mainError: 'The attached file could not be read.',
           });
+          await progressReporter.sendFinal({
+            content: 'The attached file could not be read. Use a supported text file under the size limit.',
+          }, `BUILD FAILED\nRun: ${buildRunId}\nThe attached file could not be read.`);
           return;
         }
 
         attachmentContent = attachmentResult;
       }
 
-      const buildRunId = createBuildRunId();
       const briefNormalizationResult = normalizeBuildBrief({
         prompt,
         attachment: attachmentContent,
@@ -1055,22 +1269,39 @@ module.exports = {
         metadata: {
           mode: briefNormalizationResult.mode,
           warning: briefNormalizationResult.warning || null,
+          sourceWarnings: briefNormalizationResult.sourceWarnings || [],
+          sourceMetadata: briefNormalizationResult.sourceMetadata || null,
           attachmentPresent: Boolean(attachmentContent),
         },
       });
       const briefMeta = {
         mode: briefNormalizationResult.mode || 'fallback',
-        warning: briefNormalizationResult.warning || null,
+        warning: uniqueDiagnostics([
+          ...(briefNormalizationResult.warning ? [briefNormalizationResult.warning] : []),
+          ...(briefNormalizationResult.sourceWarnings || []),
+        ]).join(' | ') || null,
         serverType: normalizedBrief?.serverType || 'general',
         assumptionsCount: Array.isArray(normalizedBrief?.assumptions) ? normalizedBrief.assumptions.length : 0,
+        contradictionsCount: Array.isArray(normalizedBrief?.contradictions) ? normalizedBrief.contradictions.length : 0,
+        contradictions: normalizedBrief?.contradictions || [],
+        sourceMetadata: briefNormalizationResult.sourceMetadata || null,
         debugFilePath: briefDebugFilePath,
       };
+      updateBuildJob(buildRunId, {
+        status: 'running',
+        briefMode: briefMeta.mode,
+        serverType: briefMeta.serverType,
+        warnings: briefMeta.warning ? [briefMeta.warning] : [],
+        debugFolder: briefDebugFilePath ? path.dirname(briefDebugFilePath) : null,
+      });
+      await progressReporter.update('brief-normalized');
 
       const result = buildLmStudioRequest({
         prompt,
         attachment: attachmentContent,
         requestedBy: interaction.user,
         normalizedBrief,
+        preparedBriefText: briefNormalizationResult.agentSourceText,
       });
 
       if (!result.ok) {
@@ -1079,9 +1310,13 @@ module.exports = {
           userId: interaction.user.id,
         });
 
-        await editDeferredReply(interaction, {
-          content: 'A prompt or a file is required to prepare the build request.',
+        updateBuildJob(buildRunId, {
+          status: 'failed',
+          mainError: 'A prompt or a file is required.',
         });
+        await progressReporter.sendFinal({
+          content: 'A prompt or a file is required to prepare the build request.',
+        }, `BUILD FAILED\nRun: ${buildRunId}\nA prompt or a file is required.`);
         return;
       }
 
@@ -1107,6 +1342,15 @@ module.exports = {
             prompt,
             attachment: attachmentContent,
             normalizedBrief,
+            preparedBriefText: briefNormalizationResult.agentSourceText,
+            runId: buildRunId,
+            onProgress: async (event) => {
+              recordBuildProgress(buildRunId, {
+                ...event,
+                debugFolder: event.runDirectoryPath || null,
+              });
+              await progressReporter.update(event.type || 'agent-progress');
+            },
           });
 
           pipelineMeta = {
@@ -1125,18 +1369,35 @@ module.exports = {
             lmStudio.errorMessage = `Agent "${pipelineResult.failedAgent}" failed: ${pipelineResult.error || 'Unknown error'}`;
             lmStudio.jsonExtraction = 'Not attempted';
 
-            await editDeferredReply(interaction, {
+            updateBuildJob(buildRunId, {
+              status: 'failed',
+              currentAgent: null,
+              mainError: lmStudio.errorMessage,
+              debugFolder: pipelineResult.runDirectoryPath || null,
+            });
+            await progressReporter.sendFinal({
               embeds: [createMultiAgentFailureEmbed({
                 failedAgent: pipelineResult.failedAgent,
                 pipelineMeta,
                 lmStudio,
               })],
-            });
+            }, [
+              'BUILD FAILED',
+              `Run: ${buildRunId}`,
+              `Agent: ${pipelineResult.failedAgent || 'unknown'}`,
+              `Cause: ${pipelineResult.error || 'Unknown error'}`,
+              `Debug: ${pipelineResult.runDirectoryPath || 'not available'}`,
+            ].join('\n'));
             return;
           } else {
             lmStudio.success = true;
             lmStudio.jsonExtraction = 'Success';
-            const processed = await processTemplateCandidate(pipelineResult.finalJson, pipelineResult.finalRaw);
+            const processed = await processTemplateCandidate(
+              pipelineResult.finalJson,
+              pipelineResult.finalRaw,
+              normalizedBrief,
+              buildRunId,
+            );
             generatedTemplate = processed.generatedTemplate;
             buildReport = processed.buildReport;
             result.skillsMeta = pipelineResult.skillsMeta || result.skillsMeta;
@@ -1147,6 +1408,13 @@ module.exports = {
             agentRuns: [],
           };
           lmStudio.called = true;
+
+          recordBuildProgress(buildRunId, {
+            agent: 'lm-studio',
+            status: 'running',
+            retriesUsed: 0,
+          });
+          await progressReporter.update('lm-studio-start');
 
           const lmStudioResult = await callLmStudio(result.request.requestPayload);
           lmStudio.durationMs = lmStudioResult.durationMs || 0;
@@ -1160,12 +1428,22 @@ module.exports = {
               : lmStudioResult.message;
 
             if (lmStudioResult.code === 'TIMEOUT') {
-              await editDeferredReply(interaction, {
-                embeds: [createTimeoutEmbed(result, lmStudio)],
+              updateBuildJob(buildRunId, {
+                status: 'failed',
+                currentAgent: null,
+                mainError: lmStudio.errorMessage,
               });
+              await progressReporter.sendFinal({
+                embeds: [createTimeoutEmbed(result, lmStudio)],
+              }, `BUILD FAILED\nRun: ${buildRunId}\n${lmStudio.errorMessage}`);
               return;
             }
           } else {
+            recordBuildProgress(buildRunId, {
+              agent: 'lm-studio',
+              status: 'completed',
+              retriesUsed: 0,
+            });
             lmStudio.success = true;
             lmStudio.rawResponseDebugFilePath = writeLmStudioRawResponseDebugFile(lmStudioResult.content);
 
@@ -1176,7 +1454,12 @@ module.exports = {
               lmStudio.errorMessage = 'LM Studio did not return usable JSON.';
             } else {
               lmStudio.jsonExtraction = 'Success';
-              const processed = await processTemplateCandidate(extracted.json, extracted.raw);
+              const processed = await processTemplateCandidate(
+                extracted.json,
+                extracted.raw,
+                normalizedBrief,
+                buildRunId,
+              );
               generatedTemplate = processed.generatedTemplate;
               buildReport = processed.buildReport;
             }
@@ -1263,10 +1546,56 @@ module.exports = {
 
       logEmbedsBeforeReply(normalizedEmbeds);
 
+      const finalTemplateStatus = generatedTemplate
+        ? inferTemplateStatus({
+          normalizationWarnings: generatedTemplate.normalizationWarnings || [],
+          repairWarnings: generatedTemplate.repairWarnings || [],
+        }, {
+          blocked: generatedTemplate.valid === false,
+          failed: false,
+        })
+        : (lmStudio.called && !lmStudio.success ? 'failed' : 'valid');
+      const finalDebugFolder = resolveBuildDebugFolder({
+        pipelineMeta,
+        generatedTemplate,
+        buildReport,
+      });
+      updateBuildJob(buildRunId, {
+        status: lmStudio.called && !lmStudio.success ? 'failed' : 'completed',
+        currentAgent: null,
+        mainError: lmStudio.called && !lmStudio.success ? lmStudio.errorMessage : null,
+        debugFolder: finalDebugFolder,
+        templateSlug: buildReport?.previewResult?.slug
+          || (generatedTemplate?.savedPath ? path.basename(generatedTemplate.savedPath, '.json') : null),
+        templateStatus: finalTemplateStatus,
+        warnings: uniqueDiagnostics([
+          ...(getBuildJob(buildRunId)?.warnings || []),
+          ...(generatedTemplate?.normalizationWarnings || []),
+          ...(generatedTemplate?.repairWarnings || []),
+          ...(generatedTemplate?.warnings || []),
+          ...(generatedTemplate?.qualityEvaluation?.warnings || []),
+          ...(generatedTemplate?.qualityEvaluation?.missingSignals || []).map((signal) => `Missing brief signal: ${signal}.`),
+          ...(generatedTemplate?.qualityEvaluation?.contradictions || []),
+        ]),
+      });
+
       try {
-        await editDeferredReply(interaction, {
+        const delivery = await progressReporter.sendFinal({
           embeds: normalizedEmbeds.slice(0, 5),
-        });
+        }, [
+          'BUILD COMPLETED',
+          `Run: ${buildRunId}`,
+          `Template: ${generatedTemplate?.name || 'not generated'}`,
+          `Status: ${finalTemplateStatus}`,
+          `Debug: ${finalDebugFolder || 'not available'}`,
+        ].join('\n'));
+
+        if (!delivery.delivered) {
+          logger.error('Build completed but final response was not delivered', {
+            runId: buildRunId,
+            debugFolder: finalDebugFolder,
+          });
+        }
       } catch (replyError) {
         logger.error('Failed to send Discord response', {
           command: 'build',
@@ -1274,10 +1603,10 @@ module.exports = {
           stack: replyError.stack,
         });
 
-        await editDeferredReply(interaction, {
+        await progressReporter.sendFinal({
           content: `BUILD CRASH\n${safeString(replyError.message, 'Unknown Discord response error.')}`,
           embeds: [],
-        });
+        }, `BUILD CRASH\nRun: ${buildRunId}\n${safeString(replyError.message, 'Unknown Discord response error.')}`);
       }
     } catch (error) {
       const fatalError = summarizeFatalError(error);
@@ -1294,12 +1623,28 @@ module.exports = {
 
       const crashMessage = `BUILD CRASH\n${fatalError.message}`;
 
+      if (buildJobCreated) {
+        try {
+          updateBuildJob(buildRunId, {
+            status: 'failed',
+            currentAgent: null,
+            mainError: fatalError.message,
+            debugFolder: crashDebugFilePath ? path.dirname(crashDebugFilePath) : null,
+          });
+        } catch (jobError) {
+          logger.error('Failed to persist build crash state', {
+            runId: buildRunId,
+            error: jobError.message,
+          });
+        }
+      }
+
       try {
-        if (interaction.deferred || interaction.replied) {
-          await editDeferredReply(interaction, {
+        if (progressReporter) {
+          await progressReporter.sendFinal({
             content: crashMessage,
             embeds: [],
-          });
+          }, `${crashMessage}\nRun: ${buildRunId}\nDebug: ${crashDebugFilePath || 'not available'}`);
           return;
         }
 
@@ -1314,6 +1659,14 @@ module.exports = {
           stack: responseError.stack,
         });
       }
+    } finally {
+      progressReporter?.stop();
     }
   },
+};
+
+module.exports._test = {
+  countEmbedsCharacters,
+  normalizeEmbedsForDiscord,
+  resolveBuildDebugFolder,
 };

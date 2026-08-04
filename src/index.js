@@ -3,6 +3,7 @@ const path = require('node:path');
 const { Client, Collection, GatewayIntentBits } = require('discord.js');
 const config = require('./config');
 const logger = require('./utils/logger');
+const { reconcileInterruptedBuildJobs } = require('./services/buildJobService');
 
 const validateStartupConfig = () => {
   if (!config.discordToken) {
@@ -45,6 +46,15 @@ const loadEvents = (client) => {
 
 const start = async () => {
   validateStartupConfig();
+
+  const interruptedJobs = reconcileInterruptedBuildJobs();
+
+  if (interruptedJobs.length) {
+    logger.warn('Interrupted build jobs reconciled after restart', {
+      count: interruptedJobs.length,
+      runIds: interruptedJobs.map((job) => job.runId).join(','),
+    });
+  }
 
   const client = new Client({
     intents: [

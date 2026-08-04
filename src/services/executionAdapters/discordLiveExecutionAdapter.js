@@ -1,11 +1,111 @@
-const { ChannelType, PermissionsBitField } = require('discord.js');
+const { ChannelType, OverwriteType, PermissionsBitField } = require('discord.js');
 
 const asBigInt = (value) => {
-  try {
-    return BigInt(value || '0');
-  } catch (error) {
-    return 0n;
+  const parsed = BigInt(value || '0');
+
+  if (parsed < 0n) {
+    throw new Error('Permission bitfield cannot be negative.');
   }
+
+  return parsed;
+};
+
+const normalizeName = (value) => String(value || '').trim().toLowerCase();
+
+const findDuplicateNames = (names) => {
+  const seen = new Set();
+  const duplicates = new Set();
+
+  names.map(normalizeName).filter(Boolean).forEach((name) => {
+    if (seen.has(name)) {
+      duplicates.add(name);
+    }
+    seen.add(name);
+  });
+
+  return Array.from(duplicates);
+};
+
+const validateLiveExecutionPreflight = async (guild, executionPlanResult) => {
+  const errors = [];
+  const warnings = [];
+  const plan = executionPlanResult?.plan;
+
+  if (!guild?.roles?.cache || !guild?.channels?.cache) {
+    errors.push('Discord guild roles or channels are not available for preflight.');
+  }
+
+  if (!plan || plan.status !== 'ready') {
+    errors.push('The execution plan is not ready.');
+  }
+
+  if (!errors.length) {
+    try {
+      if (typeof guild.roles.fetch === 'function') {
+        await guild.roles.fetch();
+      }
+
+      if (typeof guild.channels.fetch === 'function') {
+        await guild.channels.fetch();
+      }
+    } catch (error) {
+      errors.push(`Discord state could not be refreshed for preflight: ${error.message || 'unknown error'}`);
+    }
+  }
+
+  if (errors.length) {
+    return { ok: false, errors, warnings };
+  }
+
+  const steps = plan.phases.flatMap((phase) => phase.steps || []);
+  const roleNames = steps.filter((step) => step.action === 'create_role').map((step) => step.payload?.name);
+  const categoryNames = steps.filter((step) => step.action === 'create_category').map((step) => step.payload?.name);
+  const channelNames = steps.filter((step) => step.action === 'create_channel').map((step) => step.payload?.name);
+  const existingRoles = new Set(Array.from(guild.roles.cache.values()).map((role) => normalizeName(role?.name)).filter(Boolean));
+  const existingCategories = new Set(Array.from(guild.channels.cache.values())
+    .filter((channel) => channel?.type === ChannelType.GuildCategory)
+    .map((channel) => normalizeName(channel?.name))
+    .filter(Boolean));
+  const existingChannels = new Set(Array.from(guild.channels.cache.values())
+    .filter((channel) => channel?.type !== ChannelType.GuildCategory)
+    .map((channel) => normalizeName(channel?.name))
+    .filter(Boolean));
+
+  findDuplicateNames(roleNames).forEach((name) => errors.push(`The plan contains duplicate role name "${name}".`));
+  findDuplicateNames(categoryNames).forEach((name) => errors.push(`The plan contains duplicate category name "${name}".`));
+  findDuplicateNames(channelNames).forEach((name) => errors.push(`The plan contains duplicate channel name "${name}".`));
+
+  roleNames.map(normalizeName).filter(Boolean).forEach((name) => {
+    if (existingRoles.has(name)) {
+      errors.push(`Role "${name}" already exists. Live creation will not overwrite or duplicate it.`);
+    }
+  });
+  categoryNames.map(normalizeName).filter(Boolean).forEach((name) => {
+    if (existingCategories.has(name)) {
+      errors.push(`Category "${name}" already exists. Live creation will not overwrite or duplicate it.`);
+    }
+  });
+  channelNames.map(normalizeName).filter(Boolean).forEach((name) => {
+    if (existingChannels.has(name)) {
+      errors.push(`Channel "${name}" already exists. Live creation will not overwrite or duplicate it.`);
+    }
+  });
+
+  if (!steps.length) {
+    errors.push('The execution plan contains no actions.');
+  }
+
+  return {
+    ok: errors.length === 0,
+    errors,
+    warnings,
+    summary: {
+      roleCount: roleNames.length,
+      categoryCount: categoryNames.length,
+      channelCount: channelNames.length,
+      totalSteps: steps.length,
+    },
+  };
 };
 
 const formatDiscordApiError = (action, error) => {
@@ -13,6 +113,21 @@ const formatDiscordApiError = (action, error) => {
   const status = error?.status ? ` status=${error.status}` : '';
   const message = error?.message || 'Unknown Discord API error.';
   return `${action} failed:${code}${status} ${message}`.trim();
+};
+
+const buildPermissionOverwriteOptions = (allowValue, denyValue) => {
+  const options = {};
+  const allowed = new PermissionsBitField(asBigInt(allowValue));
+  const denied = new PermissionsBitField(asBigInt(denyValue));
+
+  allowed.toArray().forEach((permission) => {
+    options[permission] = true;
+  });
+  denied.toArray().forEach((permission) => {
+    options[permission] = false;
+  });
+
+  return options;
 };
 
 const createLiveDiscordExecutionAdapter = (guild) => ({
@@ -114,10 +229,11 @@ const createLiveDiscordExecutionAdapter = (guild) => ({
         };
       }
 
-      await channel.permissionOverwrites.create(overwriteTarget, {
-        allow: new PermissionsBitField(asBigInt(payload.allow)),
-        deny: new PermissionsBitField(asBigInt(payload.deny)),
-      }, {
+      await channel.permissionOverwrites.create(overwriteTarget, buildPermissionOverwriteOptions(
+        payload.allow,
+        payload.deny,
+      ), {
+        type: OverwriteType.Role,
         reason: `Template creation: overwrite for ${targetChannelRef}`,
       });
 
@@ -171,5 +287,7 @@ const createLiveDiscordExecutionAdapter = (guild) => ({
 });
 
 module.exports = {
+  buildPermissionOverwriteOptions,
   createLiveDiscordExecutionAdapter,
+  validateLiveExecutionPreflight,
 };

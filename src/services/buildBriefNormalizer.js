@@ -1,10 +1,15 @@
 const fs = require('node:fs');
 const path = require('node:path');
+const config = require('../config');
 
 const debugDirectoryPath = path.join(process.cwd(), 'debug', 'build-briefs');
 
 const isProduction = () => process.env.NODE_ENV === 'production';
 const isNonEmptyString = (value) => typeof value === 'string' && value.trim().length > 0;
+const normalizeForDetection = (value) => String(value || '')
+  .normalize('NFD')
+  .replace(/[\u0300-\u036f]/g, '')
+  .toLowerCase();
 
 const uniqueStrings = (values = []) => {
   const seen = new Set();
@@ -35,7 +40,100 @@ const createSummary = (text) => {
     return normalized;
   }
 
-  return `${normalized.slice(0, 277).trimEnd()}...`;
+  const start = normalized.slice(0, 185).trimEnd();
+  const end = normalized.slice(-85).trimStart();
+  return `${start} ... ${end}`;
+};
+
+const normalizeChunkKey = (value) => String(value || '')
+  .replace(/\s+/g, ' ')
+  .trim()
+  .toLowerCase();
+
+const splitSourceChunks = (text) => String(text || '')
+  .split(/\n+/)
+  .flatMap((line) => line.match(/[^.!?]+[.!?]+|[^.!?]+$/g) || [])
+  .map((chunk) => chunk.replace(/\s+/g, ' ').trim())
+  .filter(Boolean);
+
+const trimAtWordBoundary = (value, maxLength, fromEnd = false) => {
+  if (value.length <= maxLength) {
+    return value;
+  }
+
+  const slice = fromEnd ? value.slice(-maxLength) : value.slice(0, maxLength);
+  const boundary = fromEnd ? slice.indexOf(' ') : slice.lastIndexOf(' ');
+
+  if (boundary < Math.floor(maxLength * 0.5)) {
+    return slice;
+  }
+
+  return fromEnd ? slice.slice(boundary + 1) : slice.slice(0, boundary);
+};
+
+const prepareBuildBriefSource = ({ prompt, attachmentText, maxCharacters = config.buildBriefMaxChars }) => {
+  const sourceSections = [prompt, attachmentText]
+    .map((value) => (isNonEmptyString(value) ? value.trim() : ''))
+    .filter(Boolean);
+  const originalText = sourceSections.join('\n\n');
+  const seen = new Set();
+  let duplicateChunksRemoved = 0;
+  const uniqueChunks = [];
+
+  splitSourceChunks(originalText).forEach((chunk) => {
+    const key = normalizeChunkKey(chunk);
+
+    if (seen.has(key)) {
+      duplicateChunksRemoved += 1;
+      return;
+    }
+
+    seen.add(key);
+    uniqueChunks.push(chunk);
+  });
+
+  const deduplicatedText = uniqueChunks.join('\n');
+  const safeMaxCharacters = Number.isFinite(maxCharacters) && maxCharacters >= 2000
+    ? Math.trunc(maxCharacters)
+    : 60000;
+  let agentSourceText = deduplicatedText;
+  let truncated = false;
+
+  if (agentSourceText.length > safeMaxCharacters) {
+    const marker = '\n\n[... middle of brief omitted for context limit ...]\n\n';
+    const available = safeMaxCharacters - marker.length;
+    const headLength = Math.floor(available * 0.6);
+    const tailLength = available - headLength;
+    agentSourceText = [
+      trimAtWordBoundary(deduplicatedText, headLength),
+      marker,
+      trimAtWordBoundary(deduplicatedText, tailLength, true),
+    ].join('').slice(0, safeMaxCharacters);
+    truncated = true;
+  }
+
+  const warnings = [];
+
+  if (duplicateChunksRemoved) {
+    warnings.push(`${duplicateChunksRemoved} repeated brief section(s) were removed before generation.`);
+  }
+
+  if (truncated) {
+    warnings.push(`The agent brief was limited to ${safeMaxCharacters} characters while preserving its beginning and end.`);
+  }
+
+  return {
+    originalText,
+    agentSourceText,
+    warnings,
+    metadata: {
+      originalCharacters: originalText.length,
+      preparedCharacters: agentSourceText.length,
+      duplicateChunksRemoved,
+      truncated,
+      maxCharacters: safeMaxCharacters,
+    },
+  };
 };
 
 const splitSentences = (text) => String(text || '')
@@ -44,7 +142,7 @@ const splitSentences = (text) => String(text || '')
   .filter(Boolean);
 
 const detectServerType = (text) => {
-  const normalized = String(text || '').toLowerCase();
+  const normalized = normalizeForDetection(text);
 
   if (/(esport|scrim|tournoi|tournament|team|joueur|player)/.test(normalized)) {
     return 'esports';
@@ -71,7 +169,7 @@ const detectServerType = (text) => {
 
 const extractMatches = (text, patterns) => uniqueStrings(
   patterns
-    .filter(({ regex }) => regex.test(text))
+    .filter(({ regex }) => regex.test(text) || regex.test(normalizeForDetection(text)))
     .map(({ value }) => value),
 );
 
@@ -80,7 +178,7 @@ const detectRequiredAreas = (text) => extractMatches(text, [
   { regex: /(staff|moderation|admin|management|direction)/i, value: 'staff-operations' },
   { regex: /(joueur|player|team|scrim|training)/i, value: 'team-operations' },
   { regex: /(support|ticket|help)/i, value: 'support' },
-  { regex: /(welcome|onboarding|rules|regles)/i, value: 'onboarding' },
+  { regex: /(welcome|onboarding|rules|regles|accueil|accueillir|nouveaux)/i, value: 'onboarding' },
   { regex: /(voice|vocal|calls?)/i, value: 'voice' },
   { regex: /(premium|vip|private|prive)/i, value: 'premium-private' },
   { regex: /(media|médias|medias|content|clip|annonce|announcement)/i, value: 'media-announcements' },
@@ -127,7 +225,7 @@ const detectGoals = (text) => extractMatches(text, [
 ]);
 
 const detectTone = (text) => {
-  const normalized = String(text || '').toLowerCase();
+  const normalized = normalizeForDetection(text);
 
   if (/(premium|high-end|haut de gamme|luxueux)/.test(normalized)) {
     return 'premium';
@@ -166,7 +264,7 @@ const detectSupportHints = (text) => extractMatches(text, [
 
 const detectConstraints = (text) => {
   const constraints = [];
-  const normalized = String(text || '').toLowerCase();
+  const normalized = normalizeForDetection(text);
   const sentences = splitSentences(text);
 
   if (/(no local|zero local|0 local)/.test(normalized)) {
@@ -188,6 +286,57 @@ const detectConstraints = (text) => {
   });
 
   return uniqueStrings(constraints).slice(0, 8);
+};
+
+const detectContradictions = (text) => {
+  const normalized = normalizeForDetection(text);
+  const contradictions = [];
+  const hasBoth = (negativePattern, positivePattern, message) => {
+    if (negativePattern.test(normalized) && positivePattern.test(normalized)) {
+      contradictions.push(message);
+    }
+  };
+
+  hasBoth(
+    /(pas de|sans|no)\s+(systeme de\s+)?tickets?/,
+    /(tickets?\s+(obligatoire|necessaire|required)|il faut[^.!?]*tickets?)/,
+    'The brief both rejects and requires a ticket system.',
+  );
+  hasBoth(
+    /(pas de|sans|no)\s+(salons?\s+)?(voice|vocal|vocaux)/,
+    /(il faut[^.!?]*(voice|vocal|vocaux)|salons?\s+vocaux\s+(obligatoires?|necessaires?))/,
+    'The brief both rejects and requires voice channels.',
+  );
+  hasBoth(
+    /(serveur|espace)\s+(entierement\s+)?(public|ouvert a tous)/,
+    /(serveur|espace)\s+(entierement\s+)?(prive|ferme)|acces\s+uniquement\s+sur\s+invitation/,
+    'The brief describes the whole server as both public and private.',
+  );
+
+  return uniqueStrings(contradictions);
+};
+
+const createAgentBrief = (normalizedBrief) => {
+  if (!normalizedBrief || typeof normalizedBrief !== 'object') {
+    return null;
+  }
+
+  return {
+    summary: normalizedBrief.summary || '',
+    serverType: normalizedBrief.serverType || 'general',
+    audience: uniqueStrings(normalizedBrief.audience || []),
+    goals: uniqueStrings(normalizedBrief.goals || []),
+    tone: normalizedBrief.tone || 'professional',
+    requiredAreas: uniqueStrings(normalizedBrief.requiredAreas || []),
+    rolesMentioned: uniqueStrings(normalizedBrief.rolesMentioned || []),
+    channelsMentioned: uniqueStrings(normalizedBrief.channelsMentioned || []),
+    permissionHints: uniqueStrings(normalizedBrief.permissionHints || []),
+    onboardingHints: uniqueStrings(normalizedBrief.onboardingHints || []),
+    supportHints: uniqueStrings(normalizedBrief.supportHints || []),
+    constraints: uniqueStrings(normalizedBrief.constraints || []),
+    assumptions: uniqueStrings(normalizedBrief.assumptions || []),
+    contradictions: uniqueStrings(normalizedBrief.contradictions || []),
+  };
 };
 
 const detectMissingButUseful = ({
@@ -274,6 +423,16 @@ const createFallbackBrief = (originalPrompt, warning) => ({
     constraints: [],
     missingButUseful: [],
     assumptions: [],
+    contradictions: [],
+  },
+  agentSourceText: originalPrompt,
+  sourceWarnings: warning ? [warning] : [],
+  sourceMetadata: {
+    originalCharacters: String(originalPrompt || '').length,
+    preparedCharacters: String(originalPrompt || '').length,
+    duplicateChunksRemoved: 0,
+    truncated: false,
+    maxCharacters: config.buildBriefMaxChars,
   },
 });
 
@@ -281,11 +440,11 @@ const normalizeBuildBrief = ({ prompt, attachment }) => {
   try {
     const promptText = isNonEmptyString(prompt) ? prompt.trim() : '';
     const attachmentText = isNonEmptyString(attachment?.text) ? attachment.text.trim() : '';
-    const combinedSections = [
-      promptText,
+    const preparedSource = prepareBuildBriefSource({
+      prompt: promptText,
       attachmentText,
-    ].filter(Boolean);
-    const originalPrompt = combinedSections.join('\n\n');
+    });
+    const originalPrompt = preparedSource.originalText;
 
     if (!originalPrompt) {
       return createFallbackBrief('', 'No usable brief content was available.');
@@ -303,6 +462,7 @@ const normalizeBuildBrief = ({ prompt, attachment }) => {
     const onboardingHints = detectOnboardingHints(originalPrompt);
     const supportHints = detectSupportHints(originalPrompt);
     const constraints = detectConstraints(originalPrompt);
+    const contradictions = detectContradictions(originalPrompt);
     const missingButUseful = detectMissingButUseful({
       requiredAreas,
       rolesMentioned,
@@ -338,7 +498,11 @@ const normalizeBuildBrief = ({ prompt, attachment }) => {
         constraints,
         missingButUseful,
         assumptions,
+        contradictions,
       },
+      agentSourceText: preparedSource.agentSourceText,
+      sourceWarnings: preparedSource.warnings,
+      sourceMetadata: preparedSource.metadata,
     };
   } catch (error) {
     return createFallbackBrief(prompt, 'Brief normalization failed unexpectedly. The original prompt will be used.');
@@ -364,6 +528,8 @@ const writeNormalizedBriefDebugFile = ({ runId, normalizedBrief, metadata = {} }
 };
 
 module.exports = {
+  createAgentBrief,
   normalizeBuildBrief,
+  prepareBuildBriefSource,
   writeNormalizedBriefDebugFile,
 };

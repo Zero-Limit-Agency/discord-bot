@@ -157,11 +157,28 @@ const executeTemplateRunFromPlan = async (executionPlanResult, adapter, options 
 
   const runtimeRefs = {};
   const phaseLogs = [];
+  let executionHalted = false;
 
   for (const phase of executionPlanResult.plan.phases) {
     const stepLogs = [];
 
     for (const step of phase.steps) {
+      if (executionHalted) {
+        stepLogs.push({
+          phase: phase.name,
+          phaseLabel: phase.label,
+          stepId: step.stepId,
+          action: step.action,
+          status: 'skipped',
+          resolvedDependencies: [],
+          missingDependencies: [],
+          errors: [],
+          warnings: ['Execution halted after an earlier live step failed.'],
+          payload: step.payload,
+        });
+        continue;
+      }
+
       const dependencyCheck = resolveDependencies(step.dependsOn, runtimeRefs);
 
       if (dependencyCheck.missing.length) {
@@ -177,6 +194,7 @@ const executeTemplateRunFromPlan = async (executionPlanResult, adapter, options 
           warnings: [],
           payload: step.payload,
         });
+        executionHalted = options.stopOnFailure === true;
         continue;
       }
 
@@ -196,6 +214,7 @@ const executeTemplateRunFromPlan = async (executionPlanResult, adapter, options 
             warnings: [],
             payload: step.payload,
           });
+          executionHalted = options.stopOnFailure === true;
           continue;
         }
 
@@ -227,6 +246,7 @@ const executeTemplateRunFromPlan = async (executionPlanResult, adapter, options 
           warnings: [],
           payload: step.payload,
         });
+        executionHalted = options.stopOnFailure === true;
       }
     }
 
@@ -297,6 +317,29 @@ const executeLiveRun = async (slug, adapter) => {
   const result = await executeTemplateRun(slug, adapter, {
     mode: 'live-run',
     debugDirectoryPath: liveRunDebugDirectoryPath,
+    stopOnFailure: true,
+  });
+
+  if (!result.ok) {
+    return result;
+  }
+
+  return {
+    ok: true,
+    slug: result.slug,
+    template: result.template,
+    templateDiagnostics: result.templateDiagnostics,
+    plan: result.plan,
+    liveRun: result.run,
+    debugFilePath: result.debugFilePath,
+  };
+};
+
+const executeLiveRunFromPlan = async (executionPlanResult, adapter) => {
+  const result = await executeTemplateRunFromPlan(executionPlanResult, adapter, {
+    mode: 'live-run',
+    debugDirectoryPath: liveRunDebugDirectoryPath,
+    stopOnFailure: true,
   });
 
   if (!result.ok) {
@@ -317,5 +360,6 @@ const executeLiveRun = async (slug, adapter) => {
 module.exports = {
   executeDryRun,
   executeLiveRun,
+  executeLiveRunFromPlan,
   executeTemplateRunFromPlan,
 };

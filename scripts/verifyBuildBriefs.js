@@ -1,6 +1,11 @@
 const fs = require('node:fs');
 const path = require('node:path');
-const { normalizeBuildBrief } = require('../src/services/buildBriefNormalizer');
+const {
+  createAgentBrief,
+  normalizeBuildBrief,
+  prepareBuildBriefSource,
+} = require('../src/services/buildBriefNormalizer');
+const { buildArchitectAgentRequest } = require('../src/services/buildAgents/architectAgent');
 
 const fixturesDirectoryPath = path.join(process.cwd(), 'templates', 'brief-fixtures');
 
@@ -16,7 +21,9 @@ fs.readdirSync(fixturesDirectoryPath)
     const fixture = JSON.parse(fs.readFileSync(filePath, 'utf8'));
     const result = normalizeBuildBrief({
       prompt: fixture.prompt,
-      attachment: null,
+      attachment: fixture.attachmentText
+        ? { filename: 'fixture.txt', text: fixture.attachmentText }
+        : null,
     });
 
     if (!result.normalizedBrief) {
@@ -68,6 +75,23 @@ fs.readdirSync(fixturesDirectoryPath)
       failures.push(`Expected at least ${fixture.expected.missingButUsefulMin} missingButUseful entries.`);
     }
 
+    if (fixture.expected.contradictionsMin && brief.contradictions.length < fixture.expected.contradictionsMin) {
+      failures.push(`Expected at least ${fixture.expected.contradictionsMin} contradiction(s).`);
+    }
+
+    if (fixture.expected.duplicateChunksRemovedMin
+      && (result.sourceMetadata?.duplicateChunksRemoved || 0) < fixture.expected.duplicateChunksRemovedMin) {
+      failures.push(`Expected at least ${fixture.expected.duplicateChunksRemovedMin} duplicate chunk(s) to be removed.`);
+    }
+
+    if ((result.agentSourceText || '').length > (result.sourceMetadata?.maxCharacters || 60000)) {
+      failures.push('Prepared agent brief exceeds its configured character limit.');
+    }
+
+    if (result.agentSourceText && /originalPrompt/.test(result.agentSourceText)) {
+      failures.push('Prepared agent brief unexpectedly contains serialized normalized brief fields.');
+    }
+
     if (!brief.summary || brief.summary.length < 10) {
       failures.push('Summary is too short or missing.');
     }
@@ -84,4 +108,69 @@ fs.readdirSync(fixturesDirectoryPath)
 
 if (hasFailure) {
   process.exitCode = 1;
+}
+
+const longSource = prepareBuildBriefSource({
+  prompt: `BEGIN-BRIEF ${'details '.repeat(12000)} FINAL-CONSTRAINT`,
+  attachmentText: '',
+  maxCharacters: 2000,
+});
+
+if (!longSource.metadata.truncated
+  || longSource.agentSourceText.length > 2000
+  || !longSource.agentSourceText.startsWith('BEGIN-BRIEF')
+  || !longSource.agentSourceText.includes('FINAL-CONSTRAINT')) {
+  console.error('[FAIL] long brief compaction did not preserve the beginning, end and configured limit.');
+  process.exitCode = 1;
+} else {
+  console.log('[PASS] long brief compaction preserves beginning and end');
+}
+
+const compactAgentBrief = createAgentBrief({
+  originalPrompt: 'This raw prompt must not be copied into downstream agent context.',
+  summary: 'Compact summary.',
+  constraints: ['Keep private areas protected.'],
+});
+
+if (Object.prototype.hasOwnProperty.call(compactAgentBrief, 'originalPrompt')) {
+  console.error('[FAIL] downstream agent brief still contains originalPrompt.');
+  process.exitCode = 1;
+} else {
+  console.log('[PASS] downstream agent brief excludes originalPrompt');
+}
+
+const architectRequest = buildArchitectAgentRequest({
+  prompt: longSource.originalText,
+  attachment: null,
+  normalizedBrief: {
+    originalPrompt: longSource.originalText,
+    summary: 'A deliberately long build brief.',
+    constraints: ['Preserve the final constraint.'],
+  },
+  preparedBriefText: longSource.agentSourceText,
+  skillsBlock: null,
+  model: 'fixture-model',
+});
+const serializedArchitectRequest = JSON.stringify(architectRequest);
+
+if (serializedArchitectRequest.includes('originalPrompt') || serializedArchitectRequest.length > 10000) {
+  console.error('[FAIL] architect request still contains the full original brief or exceeds the compact test limit.');
+  process.exitCode = 1;
+} else {
+  console.log('[PASS] architect request uses compact source without serialized originalPrompt');
+}
+
+const accentedFrenchBrief = normalizeBuildBrief({
+  prompt: 'Je crée une communauté privée pour des créateurs. Il faut des règles, un accès VIP et un accueil soigné.',
+  attachment: null,
+}).normalizedBrief;
+
+if (accentedFrenchBrief.serverType !== 'content-creator'
+  || !accentedFrenchBrief.requiredAreas.includes('onboarding')
+  || !accentedFrenchBrief.requiredAreas.includes('premium-private')
+  || !accentedFrenchBrief.permissionHints.includes('private-staff-areas')) {
+  console.error('[FAIL] correctly accented French brief lost important signals.');
+  process.exitCode = 1;
+} else {
+  console.log('[PASS] correctly accented French brief preserves creator, onboarding and private signals');
 }

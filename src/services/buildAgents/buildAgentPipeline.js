@@ -16,6 +16,7 @@ const {
 } = require('./schemaGuards');
 
 const debugDirectoryPath = path.join(process.cwd(), 'debug', 'build-agents');
+const transportRetryDelayMs = 3000;
 let hasLoggedBuildRuntimeDiagnostics = false;
 
 const isProduction = () => process.env.NODE_ENV === 'production';
@@ -185,6 +186,24 @@ const summarizeError = (error, fallback) => {
   return fallback;
 };
 
+const wait = (durationMs) => new Promise((resolve) => setTimeout(resolve, durationMs));
+
+const emitBuildProgress = async (onProgress, event) => {
+  if (typeof onProgress !== 'function') {
+    return;
+  }
+
+  try {
+    await onProgress(event);
+  } catch (error) {
+    logger.warn('Build progress callback failed', {
+      agent: event?.agent || 'pipeline',
+      status: event?.status || 'unknown',
+      error: summarizeError(error, 'Unknown progress callback error.'),
+    });
+  }
+};
+
 const createAgentFailureResult = ({
   agent,
   durationMs,
@@ -300,6 +319,7 @@ const runAgent = async ({
         error: errorMessage,
         timeout: response.code === 'TIMEOUT',
         extractionMode: response.code === 'TIMEOUT' ? 'timeout' : 'request-error',
+        requestCode: response.code,
       });
     }
 
@@ -588,12 +608,22 @@ const runGuardedAgent = async ({
   runDirectoryPath,
   timeoutMs,
   maxRetries,
+  onProgress = null,
 }) => {
   let retriesUsed = 0;
   let correctionNote = '';
   let lastRawResponse = null;
 
   for (let attempt = 0; attempt <= maxRetries; attempt += 1) {
+    await emitBuildProgress(onProgress, {
+      type: 'agent-start',
+      agent,
+      status: 'running',
+      attemptNumber: attempt + 1,
+      retriesUsed,
+      timeoutMs,
+      runDirectoryPath,
+    });
     const requestPayload = buildRequestPayload(correctionNote);
     const result = await runAgent({
       agent,
@@ -608,11 +638,45 @@ const runGuardedAgent = async ({
       lastRawResponse = result.rawResponse || null;
 
       if (result.timeout || attempt === maxRetries) {
+        await emitBuildProgress(onProgress, {
+          type: result.timeout ? 'agent-timeout' : 'agent-failed',
+          agent,
+          status: result.timeout ? 'timeout' : 'failed',
+          attemptNumber: attempt + 1,
+          retriesUsed,
+          timeoutMs,
+          durationMs: result.durationMs,
+          error: result.error,
+          runDirectoryPath,
+        });
         return result;
       }
 
       retriesUsed += 1;
       correctionNote = createCorrectionNote(agent, result);
+      const retryDelayMs = result.extractionMode === 'request-error'
+        ? transportRetryDelayMs
+        : 0;
+      await emitBuildProgress(onProgress, {
+        type: 'agent-retry',
+        agent,
+        status: 'retrying',
+        attemptNumber: attempt + 2,
+        retriesUsed,
+        timeoutMs,
+        durationMs: result.durationMs,
+        error: result.error,
+        retryDelayMs,
+        runDirectoryPath,
+      });
+      if (retryDelayMs > 0) {
+        logger.info('Build agent retry delayed after transport error', {
+          agent,
+          retryDelayMs,
+          requestCode: result.requestCode || 'REQUEST_FAILED',
+        });
+        await wait(retryDelayMs);
+      }
       continue;
     }
 
@@ -624,6 +688,17 @@ const runGuardedAgent = async ({
     });
 
     if (guardResult.ok) {
+      await emitBuildProgress(onProgress, {
+        type: 'agent-completed',
+        agent,
+        status: 'completed',
+        attemptNumber: attempt + 1,
+        retriesUsed,
+        timeoutMs,
+        durationMs: result.durationMs,
+        warnings: guardResult.warnings,
+        runDirectoryPath,
+      });
       return {
         ...result,
         output: guardResult.output,
@@ -641,6 +716,18 @@ const runGuardedAgent = async ({
     });
 
     if (attempt === maxRetries) {
+      await emitBuildProgress(onProgress, {
+        type: 'agent-failed',
+        agent,
+        status: 'failed',
+        attemptNumber: attempt + 1,
+        retriesUsed,
+        timeoutMs,
+        durationMs: result.durationMs,
+        error: guardResult.errors.join(' | '),
+        warnings: guardResult.warnings,
+        runDirectoryPath,
+      });
       return createAgentFailureResult({
         agent,
         durationMs: result.durationMs,
@@ -661,6 +748,18 @@ const runGuardedAgent = async ({
       createCorrectionNote(agent, { error: guardResult.errors.join(' | ') }, guardResult),
       lastRawResponse ? `Previous response:\n${String(lastRawResponse).slice(0, 2500)}` : '',
     ].filter(Boolean).join('\n\n');
+    await emitBuildProgress(onProgress, {
+      type: 'agent-retry',
+      agent,
+      status: 'retrying',
+      attemptNumber: attempt + 2,
+      retriesUsed,
+      timeoutMs,
+      durationMs: result.durationMs,
+      error: guardResult.errors.join(' | '),
+      warnings: guardResult.warnings,
+      runDirectoryPath,
+    });
   }
 
   return createAgentFailureResult({
@@ -692,9 +791,16 @@ const stopWithFailure = ({
   skillsMeta,
 });
 
-const runBuildAgentPipeline = async ({ prompt, attachment, normalizedBrief = null }) => {
+const runBuildAgentPipeline = async ({
+  prompt,
+  attachment,
+  normalizedBrief = null,
+  preparedBriefText = null,
+  runId: requestedRunId = null,
+  onProgress = null,
+}) => {
   logBuildRuntimeDiagnosticsOnce();
-  const runId = createRunId();
+  const runId = requestedRunId || createRunId();
   const runDirectoryPath = isProduction()
     ? null
     : (ensureDebugDirectory(), ensureRunDirectory(runId));
@@ -702,7 +808,7 @@ const runBuildAgentPipeline = async ({ prompt, attachment, normalizedBrief = nul
 
   try {
     const skillsBlock = loadAiSkillsBlock({
-      promptContext: buildPromptContext({ prompt, attachment }),
+      promptContext: preparedBriefText || buildPromptContext({ prompt, attachment }),
       mode: 'minimal',
       maxCharacters: Math.min(config.aiSkillsMaxChars, 2000),
     });
@@ -721,6 +827,7 @@ const runBuildAgentPipeline = async ({ prompt, attachment, normalizedBrief = nul
         skillsBlock,
         model,
         correctionNote,
+        preparedBriefText,
       }),
       guardOutput: guardArchitectOutput,
       guardContext: {
@@ -729,6 +836,7 @@ const runBuildAgentPipeline = async ({ prompt, attachment, normalizedBrief = nul
       runDirectoryPath,
       timeoutMs: getAgentTimeoutMs('architect'),
       maxRetries,
+      onProgress,
     });
     agentRuns.push(architectRun);
 
@@ -757,6 +865,7 @@ const runBuildAgentPipeline = async ({ prompt, attachment, normalizedBrief = nul
       runDirectoryPath,
       timeoutMs: getAgentTimeoutMs('permissions'),
       maxRetries,
+      onProgress,
     });
     agentRuns.push(permissionsRun);
 
@@ -786,6 +895,7 @@ const runBuildAgentPipeline = async ({ prompt, attachment, normalizedBrief = nul
       runDirectoryPath,
       timeoutMs: getAgentTimeoutMs('content'),
       maxRetries,
+      onProgress,
     });
     agentRuns.push(contentRun);
 
@@ -799,6 +909,15 @@ const runBuildAgentPipeline = async ({ prompt, attachment, normalizedBrief = nul
       });
     }
 
+    await emitBuildProgress(onProgress, {
+      type: 'agent-start',
+      agent: 'assembler',
+      status: 'running',
+      attemptNumber: 1,
+      retriesUsed: 0,
+      timeoutMs: getAgentTimeoutMs('assembler'),
+      runDirectoryPath,
+    });
     const assemblerRun = runLocalAssembler({
       architecture: architectRun.output,
       permissions: permissionsRun.output,
@@ -809,6 +928,17 @@ const runBuildAgentPipeline = async ({ prompt, attachment, normalizedBrief = nul
     agentRuns.push(assemblerRun);
 
     if (!assemblerRun.success) {
+      await emitBuildProgress(onProgress, {
+        type: 'agent-failed',
+        agent: 'assembler',
+        status: 'failed',
+        attemptNumber: 1,
+        retriesUsed: 0,
+        timeoutMs: assemblerRun.timeoutMs,
+        durationMs: assemblerRun.durationMs,
+        error: assemblerRun.error,
+        runDirectoryPath,
+      });
       return stopWithFailure({
         runId,
         runDirectoryPath,
@@ -817,6 +947,18 @@ const runBuildAgentPipeline = async ({ prompt, attachment, normalizedBrief = nul
         skillsMeta,
       });
     }
+
+    await emitBuildProgress(onProgress, {
+      type: 'agent-completed',
+      agent: 'assembler',
+      status: 'completed',
+      attemptNumber: 1,
+      retriesUsed: 0,
+      timeoutMs: assemblerRun.timeoutMs,
+      durationMs: assemblerRun.durationMs,
+      warnings: assemblerRun.agentWarnings,
+      runDirectoryPath,
+    });
 
     return {
       ok: true,

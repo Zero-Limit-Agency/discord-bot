@@ -1,3 +1,5 @@
+const { createAgentBrief } = require('../buildBriefNormalizer');
+
 const buildContentAgentRequest = ({ architecture, normalizedBrief, model, correctionNote = '' }) => ({
   model,
   temperature: 0.2,
@@ -21,6 +23,7 @@ const buildContentAgentRequest = ({ architecture, normalizedBrief, model, correc
         'If the architecture is esports, mention announcements, team/player areas, scrims, tournaments, support, or premium areas when they exist.',
         'If the architecture is content creator oriented, mention media, announcements, partnerships, support, and community flow when they exist.',
         'If the architecture is premium/private, keep the tone polished and mention access flow, support path, and private member spaces when they exist.',
+        'When onboarding, premium access, or member guidance is requested, return at least one useful welcome embed tied to real architecture channels.',
         'If no rule/support/ticket guidance is needed, return empty arrays instead of filler text.',
         'Use the normalized brief to respect tone, goals, onboarding hints, support hints, and explicit constraints.',
       ].join('\n'),
@@ -31,7 +34,7 @@ const buildContentAgentRequest = ({ architecture, normalizedBrief, model, correc
         'Architecture JSON:',
         JSON.stringify(architecture, null, 2),
         normalizedBrief ? '\nNormalized brief JSON:' : '',
-        normalizedBrief ? JSON.stringify(normalizedBrief, null, 2) : '',
+        normalizedBrief ? JSON.stringify(createAgentBrief(normalizedBrief), null, 2) : '',
         '',
         'Return this exact JSON shape:',
         '{',

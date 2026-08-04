@@ -116,6 +116,7 @@ const config = {
   discordTemplateExecutionEnabled: String(process.env.DISCORD_TEMPLATE_EXECUTION_ENABLED || 'false').toLowerCase() === 'true',
   attachmentTextMaxBytes: Number.parseInt(process.env.ATTACHMENT_TEXT_MAX_BYTES || '1048576', 10),
   attachmentFetchTimeoutMs: Number.parseInt(process.env.ATTACHMENT_FETCH_TIMEOUT_MS || '10000', 10),
+  buildBriefMaxChars: Number.parseInt(process.env.BUILD_BRIEF_MAX_CHARS || '60000', 10),
   staffRoleIds: (process.env.STAFF_ROLE_IDS || '')
     .split(',')
     .map((roleId) => roleId.trim())
@@ -151,6 +152,10 @@ if (!Number.isFinite(config.aiSkillsMaxChars) || config.aiSkillsMaxChars <= 0) {
 
 if (!Number.isFinite(config.attachmentFetchTimeoutMs) || config.attachmentFetchTimeoutMs <= 0) {
   config.attachmentFetchTimeoutMs = 10000;
+}
+
+if (!Number.isFinite(config.buildBriefMaxChars) || config.buildBriefMaxChars < 2000) {
+  config.buildBriefMaxChars = 60000;
 }
 
 config.getRuntimeTimeoutConfig = getRuntimeTimeoutConfig;

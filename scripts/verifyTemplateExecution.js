@@ -1,10 +1,15 @@
 const fs = require('node:fs');
 const path = require('node:path');
+const { ChannelType, PermissionsBitField } = require('discord.js');
 const { prepareTemplate } = require('../src/services/discordTemplateService');
 const { buildDiscordPayloadsFromLoaded } = require('../src/services/discordPayloadBuilder');
 const { buildExecutionPlanFromPayloadResult } = require('../src/services/discordServerOrchestrator');
 const { executeTemplateRunFromPlan } = require('../src/services/discordTemplateRunner');
 const mockAdapter = require('../src/services/executionAdapters/mockDiscordExecutionAdapter');
+const {
+  createLiveDiscordExecutionAdapter,
+  validateLiveExecutionPreflight,
+} = require('../src/services/executionAdapters/discordLiveExecutionAdapter');
 
 const fixturesDirectoryPath = path.join(process.cwd(), 'templates', 'execution-fixtures');
 process.env.NODE_ENV = 'production';
@@ -158,6 +163,151 @@ const evaluateFixture = async (fileName) => {
   };
 };
 
+const verifyPayloadPermissionSafety = () => {
+  const loaded = prepareTemplate({
+    name: 'Payload Safety Fixture',
+    description: '',
+    roles: [{ id: 'staff', key: 'staff', name: 'Staff', permissions: ['view_channel', 'connect', 'speak'] }],
+    categories: [{ id: 'info', key: 'info', name: 'Info' }],
+    channels: [{
+      id: 'chat', key: 'chat', name: 'chat', type: 'text', categoryId: 'info',
+      permissions: [
+        { target: 'staff', allow: ['view_channel', 'connect', 'speak'], deny: [] },
+        { target: 'ghost', allow: ['view_channel'], deny: [] },
+      ],
+    }],
+    welcomeEmbeds: [{ title: 'Welcome' }],
+  }, { slug: 'payload-safety', source: 'inline-fixture', path: 'inline' });
+  const payloadResult = buildDiscordPayloadsFromLoaded(loaded);
+
+  if (!payloadResult.ok) {
+    throw new Error(`Payload safety fixture failed: ${(payloadResult.errors || []).join(' | ')}`);
+  }
+
+  const rolePermissions = new PermissionsBitField(BigInt(payloadResult.payloads.roles[0].discordPayload.permissions));
+  const overwrites = payloadResult.payloads.channels[0].discordPayload.permissionOverwrites;
+  const staffOverwrite = overwrites.find((overwrite) => overwrite.roleRef === 'staff');
+  const overwritePermissions = new PermissionsBitField(BigInt(staffOverwrite.allow));
+
+  if (rolePermissions.has(PermissionsBitField.Flags.Connect)
+    || rolePermissions.has(PermissionsBitField.Flags.Speak)
+    || overwritePermissions.has(PermissionsBitField.Flags.Connect)
+    || overwritePermissions.has(PermissionsBitField.Flags.Speak)) {
+    throw new Error('Payload builder retained misplaced voice permissions.');
+  }
+
+  if (overwrites.some((overwrite) => overwrite.roleRef === 'ghost')) {
+    throw new Error('Payload builder retained an orphan role overwrite.');
+  }
+
+  console.log('[PASS] payload builder drops incompatible and orphan permissions');
+};
+
+const verifyLivePreflight = async () => {
+  const planResult = {
+    plan: {
+      status: 'ready',
+      phases: [
+        { steps: [{ action: 'create_role', payload: { name: 'Staff' } }] },
+        { steps: [{ action: 'create_category', payload: { name: 'Operations' } }] },
+        { steps: [{ action: 'create_channel', payload: { name: 'staff-chat' } }] },
+      ],
+    },
+  };
+  const cleanGuild = {
+    roles: { cache: new Map([['everyone', { name: '@everyone' }]]), fetch: async () => null },
+    channels: { cache: new Map(), fetch: async () => null },
+  };
+  const conflictingGuild = {
+    roles: { cache: new Map([['existing', { name: 'Staff' }]]), fetch: async () => null },
+    channels: { cache: new Map([
+      ['category', { name: 'Operations', type: ChannelType.GuildCategory }],
+      ['channel', { name: 'staff-chat', type: ChannelType.GuildText }],
+    ]), fetch: async () => null },
+  };
+  const cleanResult = await validateLiveExecutionPreflight(cleanGuild, planResult);
+  const conflictResult = await validateLiveExecutionPreflight(conflictingGuild, planResult);
+
+  if (!cleanResult.ok || conflictResult.ok || conflictResult.errors.length !== 3) {
+    throw new Error('Live preflight did not reliably detect existing Discord objects.');
+  }
+
+  console.log('[PASS] live preflight blocks role, category and channel collisions');
+};
+
+const verifyLiveFailFast = async () => {
+  const calls = [];
+  const adapter = {
+    createRole: async () => { calls.push('role'); return { ok: false, error: 'Synthetic role failure.' }; },
+    createCategory: async () => { calls.push('category'); return { ok: true, runtimeId: 'category' }; },
+    createChannel: async () => { calls.push('channel'); return { ok: true, runtimeId: 'channel' }; },
+    applyPermissionOverwrite: async () => { calls.push('overwrite'); return { ok: true, runtimeId: 'overwrite' }; },
+    postOnboardingEmbed: async () => { calls.push('embed'); return { ok: true, runtimeId: 'embed' }; },
+  };
+  const result = await executeTemplateRunFromPlan({
+    slug: 'fail-fast',
+    template: { name: 'Fail Fast Fixture' },
+    plan: {
+      status: 'ready',
+      blockingErrors: [],
+      warnings: [],
+      phases: [
+        { name: 'Phase 1', label: 'Roles', steps: [{ stepId: 'role-1', action: 'create_role', templateRef: 'staff', payload: {}, dependsOn: [], outputPlaceholder: 'FUTURE_ROLE_staff' }] },
+        { name: 'Phase 2', label: 'Categories', steps: [{ stepId: 'category-1', action: 'create_category', templateRef: 'staff', payload: {}, dependsOn: [], outputPlaceholder: 'FUTURE_CATEGORY_staff' }] },
+      ],
+    },
+  }, adapter, {
+    mode: 'live-run-fixture',
+    debugDirectoryPath: path.join(process.cwd(), 'debug', 'live-runs'),
+    stopOnFailure: true,
+  });
+
+  if (!result.ok || calls.join(',') !== 'role' || result.run.summary.failedCount !== 1 || result.run.summary.skippedCount !== 1) {
+    throw new Error('Live fail-fast did not halt subsequent adapter actions.');
+  }
+
+  console.log('[PASS] live runner halts adapter actions after the first failure');
+};
+
+const verifyLiveOverwriteShape = async () => {
+  let captured = null;
+  const channel = {
+    permissionOverwrites: {
+      create: async (target, options, metadata) => {
+        captured = { target, options, metadata };
+      },
+    },
+  };
+  const guild = {
+    roles: { everyone: { id: 'everyone-id' } },
+    channels: {
+      cache: new Map([['channel-id', channel]]),
+      fetch: async () => null,
+    },
+  };
+  const adapter = createLiveDiscordExecutionAdapter(guild);
+  const allow = new PermissionsBitField([PermissionsBitField.Flags.ViewChannel]).bitfield.toString();
+  const deny = new PermissionsBitField([PermissionsBitField.Flags.SendMessages]).bitfield.toString();
+  const result = await adapter.applyPermissionOverwrite({
+    targetChannelRef: 'staff-chat',
+    roleRef: '@everyone',
+    payload: { allow, deny },
+    resolvedChannelId: 'channel-id',
+    resolvedRoleId: null,
+  });
+
+  if (!result.ok
+    || captured?.target !== 'everyone-id'
+    || captured?.options?.ViewChannel !== true
+    || captured?.options?.SendMessages !== false
+    || Object.prototype.hasOwnProperty.call(captured?.options || {}, 'allow')
+    || Object.prototype.hasOwnProperty.call(captured?.options || {}, 'deny')) {
+    throw new Error('Live adapter did not convert overwrite bitfields to Discord.js permission options.');
+  }
+
+  console.log('[PASS] live adapter converts overwrite bitfields to Discord.js options');
+};
+
 const main = async () => {
   const fixtureFiles = fs.readdirSync(fixturesDirectoryPath)
     .filter((fileName) => fileName.endsWith('.json'))
@@ -180,6 +330,16 @@ const main = async () => {
     console.log(`[PASS] ${result.fileName} -> ${result.finalStatus}${result.repaired ? ' repaired' : ' valid'}`);
     console.log(`  ${formatSummaryLine('Warnings', result.warnings)}`);
     console.log(`  ${formatSummaryLine('Errors', result.errors)}`);
+  }
+
+  try {
+    verifyPayloadPermissionSafety();
+    await verifyLivePreflight();
+    await verifyLiveFailFast();
+    await verifyLiveOverwriteShape();
+  } catch (error) {
+    hasFailure = true;
+    console.error(`[FAIL] execution safety checks: ${error.message}`);
   }
 
   if (hasFailure) {

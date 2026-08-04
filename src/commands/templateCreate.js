@@ -7,8 +7,11 @@ const {
 const config = require('../config');
 const { isStaffMember } = require('../utils/permissions');
 const logger = require('../utils/logger');
-const { executeDryRun, executeLiveRun } = require('../services/discordTemplateRunner');
-const { createLiveDiscordExecutionAdapter } = require('../services/executionAdapters/discordLiveExecutionAdapter');
+const { executeDryRun, executeLiveRunFromPlan } = require('../services/discordTemplateRunner');
+const {
+  createLiveDiscordExecutionAdapter,
+  validateLiveExecutionPreflight,
+} = require('../services/executionAdapters/discordLiveExecutionAdapter');
 const {
   countDiagnostics,
   formatFailureMessage,
@@ -169,8 +172,25 @@ module.exports = {
         return;
       }
 
+      const livePreflight = await validateLiveExecutionPreflight(interaction.guild, dryRunResult);
+
+      if (!livePreflight.ok) {
+        logger.warn('Template create live preflight blocked', {
+          template: templateSlug,
+          errors: livePreflight.errors.length,
+        });
+
+        await interaction.editReply({
+          content: formatFailureMessage('Live creation was blocked by the final preflight.', {
+            errors: livePreflight.errors,
+            warnings: livePreflight.warnings,
+          }),
+        });
+        return;
+      }
+
       const liveAdapter = createLiveDiscordExecutionAdapter(interaction.guild);
-      const liveRunResult = await executeLiveRun(templateSlug, liveAdapter);
+      const liveRunResult = await executeLiveRunFromPlan(dryRunResult, liveAdapter);
 
       if (!liveRunResult.ok) {
         logger.warn('Template live run failed', {

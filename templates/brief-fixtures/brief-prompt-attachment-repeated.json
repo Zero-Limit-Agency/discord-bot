@@ -1,0 +1,11 @@
+{
+  "name": "brief-prompt-attachment-repeated",
+  "prompt": "Je veux un serveur pour une communaute de createurs. Il faut des annonces pour les lives. Il faut du support pour les membres.",
+  "attachmentText": "Il faut des annonces pour les lives. Il faut du support pour les membres. Je veux aussi un espace media pour les videos et les clips, avec une discussion communautaire simple.",
+  "expected": {
+    "serverType": "content-creator",
+    "channelsMentionedIncludes": ["announcements", "support", "media"],
+    "goalsIncludes": ["content-publishing", "member-support"],
+    "duplicateChunksRemovedMin": 2
+  }
+}

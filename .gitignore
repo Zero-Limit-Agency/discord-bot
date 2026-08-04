@@ -1,6 +1,7 @@
 node_modules
 .env
 .data/
+debug/
 debug/generated-payloads/
 debug/execution-plans/
 debug/simulations/
@@ -14,3 +15,4 @@ debug/build-reports/
 debug/live-runs/
 debug/build-final-prompts/
 debug/build-agents/
+debug/build-quality/
