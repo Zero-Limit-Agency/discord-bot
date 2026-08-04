@@ -3,12 +3,12 @@
     "status": "success",
     "repaired": false,
     "warningIncludes": [
-      "references unresolved role"
+      "dropped overwrite for missing role"
     ],
     "overwriteStepCount": 0
   },
   "name": "Orphan Overwrite Server",
-  "description": "Overwrite should be dropped at execution planning time.",
+  "description": "Overwrite should be dropped before execution planning.",
   "roles": [
     {
       "id": "staff",

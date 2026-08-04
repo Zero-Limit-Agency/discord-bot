@@ -31,6 +31,16 @@ const buildPermissionBitfield = (permissions, pathLabel, warnings, errors, chann
   let bitfield = 0n;
 
   normalizedPermissions.forEach((permission) => {
+    if ((channelType === 'role' || (channelType && channelType !== 'voice')) && ['connect', 'speak'].includes(permission)) {
+      warnings.push(`${pathLabel} dropped voice-oriented permission "${permission}" outside a voice channel overwrite.`);
+      return;
+    }
+
+    if (channelType === 'voice' && ['send_messages', 'manage_messages', 'read_message_history', 'attach_files', 'embed_links'].includes(permission)) {
+      warnings.push(`${pathLabel} dropped text-oriented permission "${permission}" on a voice channel.`);
+      return;
+    }
+
     const mappedPermission = mapPermission(permission);
 
     if (mappedPermission === null) {
@@ -44,13 +54,6 @@ const buildPermissionBitfield = (permissions, pathLabel, warnings, errors, chann
       warnings.push(`${pathLabel} could not resolve permission "${permission}".`);
     }
 
-    if (channelType === 'voice' && ['send_messages', 'manage_messages', 'read_message_history', 'attach_files', 'embed_links'].includes(permission)) {
-      warnings.push(`${pathLabel} uses text-oriented permission "${permission}" on a voice channel.`);
-    }
-
-    if (channelType !== 'voice' && ['connect', 'speak'].includes(permission)) {
-      warnings.push(`${pathLabel} uses voice-oriented permission "${permission}" on a non-voice channel.`);
-    }
   });
 
   return bitfield;
@@ -63,6 +66,7 @@ const buildRolePayload = (role, index, warnings, errors) => {
     `roles[${index}].permissions`,
     warnings,
     errors,
+    'role',
   );
 
   return {
@@ -77,16 +81,30 @@ const buildRolePayload = (role, index, warnings, errors) => {
   };
 };
 
-const buildOverwritePayload = (overwrite, pathLabel, channelType, warnings, errors) => ({
-  targetRef: overwrite.target,
-  discordPayload: {
-    type: OverwriteType.Role,
-    allow: buildPermissionBitfield(overwrite.allow, `${pathLabel}.allow`, warnings, errors, channelType).toString(),
-    deny: buildPermissionBitfield(overwrite.deny, `${pathLabel}.deny`, warnings, errors, channelType).toString(),
-  },
-});
+const buildOverwritePayload = (overwrite, pathLabel, channelType, roleIds, warnings, errors) => {
+  const targetRef = String(overwrite?.target || '').trim();
 
-const buildChannelPayload = (channel, index, warnings, errors) => {
+  if (!targetRef) {
+    errors.push(`${pathLabel}.target is required.`);
+    return null;
+  }
+
+  if (targetRef !== '@everyone' && !roleIds.has(targetRef)) {
+    warnings.push(`${pathLabel} dropped overwrite for missing role "${targetRef}".`);
+    return null;
+  }
+
+  return {
+    targetRef,
+    discordPayload: {
+      type: OverwriteType.Role,
+      allow: buildPermissionBitfield(overwrite.allow, `${pathLabel}.allow`, warnings, errors, channelType).toString(),
+      deny: buildPermissionBitfield(overwrite.deny, `${pathLabel}.deny`, warnings, errors, channelType).toString(),
+    },
+  };
+};
+
+const buildChannelPayload = (channel, index, roleIds, warnings, errors) => {
   const internalId = channel.id || channel.key;
   const mappedType = mapChannelType(channel.type);
 
@@ -99,9 +117,10 @@ const buildChannelPayload = (channel, index, warnings, errors) => {
       overwrite,
       `channels[${index}].permissions[${overwriteIndex}]`,
       channel.type,
+      roleIds,
       warnings,
       errors,
-    ))
+    )).filter(Boolean)
     : [];
 
   return {
@@ -203,10 +222,11 @@ const buildDiscordPayloadsFromLoaded = (loaded) => {
     ...mapping.warnings,
   ];
   const errors = [];
+  const roleIds = new Set(loaded.template.roles.map((role) => role.id || role.key).filter(Boolean));
 
   const rolePayloads = loaded.template.roles.map((role, index) => buildRolePayload(role, index, warnings, errors));
   const categoryPayloads = loaded.template.categories.map((category) => buildCategoryPayload(category));
-  const channelPayloads = loaded.template.channels.map((channel, index) => buildChannelPayload(channel, index, warnings, errors));
+  const channelPayloads = loaded.template.channels.map((channel, index) => buildChannelPayload(channel, index, roleIds, warnings, errors));
   const embedPayloads = loaded.template.welcomeEmbeds.map((embed, index) => buildEmbedPayload(embed, index, warnings));
 
   const payloads = {
@@ -228,6 +248,34 @@ const buildDiscordPayloadsFromLoaded = (loaded) => {
     errors: errors.length,
     debugFile: Boolean(debugFilePath),
   });
+
+  if (errors.length) {
+    return {
+      ok: false,
+      code: 'PAYLOAD_BUILD_FAILED',
+      message: 'Discord payload build failed.',
+      errors,
+      warnings,
+      slug: loaded.slug,
+      template: loaded.template,
+      templateDiagnostics: {
+        normalizationWarnings: loaded.normalizationWarnings || [],
+        repairWarnings: loaded.repairWarnings || [],
+        validationWarnings: loaded.validation.warnings,
+      },
+      payloads,
+      summary: {
+        rolePayloadCount: rolePayloads.length,
+        categoryPayloadCount: categoryPayloads.length,
+        channelPayloadCount: channelPayloads.length,
+        embedPayloadCount: embedPayloads.length,
+      },
+      buildErrors: errors,
+      buildWarnings: warnings,
+      mapping,
+      debugFilePath: null,
+    };
+  }
 
   return {
     ok: true,
