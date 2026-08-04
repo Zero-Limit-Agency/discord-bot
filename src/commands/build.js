@@ -3,6 +3,7 @@ const {
   MessageFlags,
   SlashCommandBuilder,
 } = require('discord.js');
+const { randomUUID } = require('node:crypto');
 const config = require('../config');
 const { isStaffMember } = require('../utils/permissions');
 const logger = require('../utils/logger');
@@ -295,7 +296,7 @@ const writeBuildCrashDebugFile = (error) => {
   return filePath;
 };
 
-const createBuildRunId = () => new Date().toISOString().replace(/[:.]/g, '-');
+const createBuildRunId = () => `${new Date().toISOString().replace(/[:.]/g, '-')}-${randomUUID().slice(0, 8)}`;
 
 const safeCount = (value, fallback = 0) => {
   if (Number.isFinite(value)) {
@@ -1419,6 +1420,7 @@ module.exports = {
           || (generatedTemplate?.savedPath ? path.basename(generatedTemplate.savedPath, '.json') : null),
         templateStatus: finalTemplateStatus,
         warnings: uniqueDiagnostics([
+          ...(getBuildJob(buildRunId)?.warnings || []),
           ...(generatedTemplate?.normalizationWarnings || []),
           ...(generatedTemplate?.repairWarnings || []),
           ...(generatedTemplate?.warnings || []),

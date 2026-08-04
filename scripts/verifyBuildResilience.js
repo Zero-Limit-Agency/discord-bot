@@ -48,6 +48,9 @@ const verifyJobLifecycle = () => {
     agent: 'architect',
     status: 'completed',
     retriesUsed: 1,
+    durationMs: 1234,
+    timeoutMs: 900000,
+    warnings: ['Architect output was repaired locally.'],
   });
   store.updateJob(runId, {
     status: 'completed',
@@ -59,6 +62,9 @@ const verifyJobLifecycle = () => {
   assert(job.status === 'completed', 'Expected completed build job status.');
   assert(job.completedAgents.includes('architect'), 'Expected completed architect agent.');
   assert(job.retries.architect === 1, 'Expected persisted architect retry count.');
+  assert(job.agentDurationsMs.architect === 1234, 'Expected persisted architect duration.');
+  assert(job.agentTimeoutsMs.architect === 900000, 'Expected persisted architect timeout.');
+  assert(job.warnings.includes('Architect output was repaired locally.'), 'Expected persisted agent warning.');
   assert(job.templateSlug === 'verified-template', 'Expected persisted template slug.');
   assert(!JSON.stringify(job).includes('DISCORD_TOKEN'), 'Job data must not contain secret names.');
 };

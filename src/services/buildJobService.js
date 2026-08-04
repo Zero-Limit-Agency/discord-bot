@@ -42,6 +42,19 @@ const cleanRetries = (value) => {
     .filter(([agent]) => Boolean(agent)));
 };
 
+const cleanNumberMap = (value) => {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return {};
+  }
+
+  return Object.fromEntries(Object.entries(value)
+    .map(([key, number]) => [
+      cleanString(key, null, 50),
+      Number.isFinite(Number(number)) ? Math.max(0, Math.trunc(Number(number))) : null,
+    ])
+    .filter(([key, number]) => Boolean(key) && number !== null));
+};
+
 const createBuildJobStore = ({ jobsDirectoryPath = defaultJobsDirectoryPath } = {}) => {
   const ensureDirectory = () => {
     fs.mkdirSync(jobsDirectoryPath, { recursive: true });
@@ -87,6 +100,8 @@ const createBuildJobStore = ({ jobsDirectoryPath = defaultJobsDirectoryPath } = 
       currentAgent: cleanString(job.currentAgent, null, 50),
       completedAgents: cleanStringArray(job.completedAgents, 10),
       retries: cleanRetries(job.retries),
+      agentDurationsMs: cleanNumberMap(job.agentDurationsMs),
+      agentTimeoutsMs: cleanNumberMap(job.agentTimeoutsMs),
       warnings: cleanStringArray(job.warnings, 25),
       mainError: cleanString(job.mainError, null, 1000),
       debugFolder: cleanString(job.debugFolder, null, 1000),
@@ -131,6 +146,8 @@ const createBuildJobStore = ({ jobsDirectoryPath = defaultJobsDirectoryPath } = 
       status: nextStatus,
       completedAgents: patch?.completedAgents ?? current.completedAgents,
       retries: patch?.retries ?? current.retries,
+      agentDurationsMs: patch?.agentDurationsMs ?? current.agentDurationsMs,
+      agentTimeoutsMs: patch?.agentTimeoutsMs ?? current.agentTimeoutsMs,
       warnings: patch?.warnings ?? current.warnings,
       startedAt: current.startedAt || (nextStatus === 'running' ? new Date().toISOString() : null),
       finishedAt: terminalStatuses.has(nextStatus) ? (patch?.finishedAt || new Date().toISOString()) : null,
@@ -150,6 +167,8 @@ const createBuildJobStore = ({ jobsDirectoryPath = defaultJobsDirectoryPath } = 
     const agent = cleanString(event.agent, null, 50);
     const completedAgents = [...current.completedAgents];
     const retries = { ...current.retries };
+    const agentDurationsMs = { ...current.agentDurationsMs };
+    const agentTimeoutsMs = { ...current.agentTimeoutsMs };
 
     if (agent && event.status === 'completed' && !completedAgents.includes(agent)) {
       completedAgents.push(agent);
@@ -159,11 +178,22 @@ const createBuildJobStore = ({ jobsDirectoryPath = defaultJobsDirectoryPath } = 
       retries[agent] = Math.max(retries[agent] || 0, Math.trunc(Number(event.retriesUsed)));
     }
 
+    if (agent && Number.isFinite(Number(event.durationMs))) {
+      agentDurationsMs[agent] = Math.max(0, Math.trunc(Number(event.durationMs)));
+    }
+
+    if (agent && Number.isFinite(Number(event.timeoutMs))) {
+      agentTimeoutsMs[agent] = Math.max(0, Math.trunc(Number(event.timeoutMs)));
+    }
+
     return updateJob(runId, {
       status: event.status === 'failed' || event.status === 'timeout' ? 'failed' : 'running',
       currentAgent: ['completed', 'failed', 'timeout'].includes(event.status) ? null : agent,
       completedAgents,
       retries,
+      agentDurationsMs,
+      agentTimeoutsMs,
+      warnings: [...current.warnings, ...cleanStringArray(event.warnings, 10)],
       mainError: ['failed', 'timeout'].includes(event.status)
         ? cleanString(event.error, 'Build agent failed.', 1000)
         : current.mainError,
