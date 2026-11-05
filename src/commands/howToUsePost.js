@@ -4,7 +4,7 @@ const {
 } = require('discord.js');
 const createHowToUseEmbeds = require('../embeds/howToUseEmbed');
 const logger = require('../utils/logger');
-const { isStaffMember } = require('../utils/permissions');
+const { isOwner } = require('../utils/permissions');
 
 const PERMISSION_ERROR = 'You do not have permission to use this command.';
 const CHANNEL_ERROR = 'I cannot send embeds in that channel.';
@@ -46,7 +46,7 @@ module.exports = {
       .setDescription('The channel where the guide will be posted.')
       .setRequired(true)),
   async execute(interaction) {
-    if (!isStaffMember(interaction.member)) {
+    if (!interaction.guildId || !isOwner(interaction.user.id)) {
       await interaction.reply({
         content: PERMISSION_ERROR,
         ephemeral: true,

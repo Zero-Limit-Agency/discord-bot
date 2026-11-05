@@ -1,5 +1,5 @@
 const { SlashCommandBuilder } = require('discord.js');
-const { isStaffMember } = require('../utils/permissions');
+const { isOwner } = require('../utils/permissions');
 const logger = require('../utils/logger');
 const { simulateExecutionPlan } = require('../services/discordExecutionSimulator');
 const { createTemplateSimulationEmbed } = require('../embeds/templatePreviewEmbed');
@@ -13,7 +13,7 @@ module.exports = {
       .setDescription('Template slug to simulate, for example esport-team.')
       .setRequired(true)),
   async execute(interaction) {
-    if (!isStaffMember(interaction.member)) {
+    if (!interaction.guildId || !isOwner(interaction.user.id)) {
       await interaction.reply({
         content: 'You do not have permission to use this command.',
         ephemeral: true,

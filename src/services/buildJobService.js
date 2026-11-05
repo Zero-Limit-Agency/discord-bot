@@ -57,7 +57,7 @@ const cleanNumberMap = (value) => {
 
 const createBuildJobStore = ({ jobsDirectoryPath = defaultJobsDirectoryPath } = {}) => {
   const ensureDirectory = () => {
-    fs.mkdirSync(jobsDirectoryPath, { recursive: true });
+    fs.mkdirSync(jobsDirectoryPath, { recursive: true, mode: 0o700 });
   };
 
   const getJobPath = (runId) => path.join(jobsDirectoryPath, `${safeRunId(runId)}.json`);
@@ -80,7 +80,8 @@ const createBuildJobStore = ({ jobsDirectoryPath = defaultJobsDirectoryPath } = 
     ensureDirectory();
     const filePath = getJobPath(job.runId);
     const temporaryPath = `${filePath}.tmp`;
-    fs.writeFileSync(temporaryPath, `${JSON.stringify(job, null, 2)}\n`, 'utf8');
+    const fd = fs.openSync(temporaryPath, 'w', 0o600);
+    try { fs.writeFileSync(fd, `${JSON.stringify(job, null, 2)}\n`); fs.fsyncSync(fd); } finally { fs.closeSync(fd); }
     fs.renameSync(temporaryPath, filePath);
     return filePath;
   };

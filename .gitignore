@@ -1,5 +1,8 @@
 node_modules
 .env
+.env.*
+!.env.example
+templates/drafts/
 .data/
 debug/
 debug/generated-payloads/

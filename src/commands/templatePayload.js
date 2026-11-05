@@ -1,5 +1,5 @@
 const { MessageFlags, SlashCommandBuilder } = require('discord.js');
-const { isStaffMember } = require('../utils/permissions');
+const { isOwner } = require('../utils/permissions');
 const logger = require('../utils/logger');
 const { buildDiscordPayloads } = require('../services/discordPayloadBuilder');
 const { createTemplatePayloadEmbed } = require('../embeds/templatePreviewEmbed');
@@ -14,7 +14,7 @@ module.exports = {
       .setDescription('Template slug to build, for example esport-team.')
       .setRequired(true)),
   async execute(interaction) {
-    if (!isStaffMember(interaction.member)) {
+    if (!interaction.guildId || !isOwner(interaction.user.id)) {
       await interaction.reply({
         content: 'You do not have permission to use this command.',
         flags: MessageFlags.Ephemeral,
