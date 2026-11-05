@@ -1,24 +1,17 @@
 const {
-  EmbedBuilder,
   MessageFlags,
   PermissionsBitField,
   SlashCommandBuilder,
 } = require('discord.js');
 const config = require('../config');
-const { isStaffMember } = require('../utils/permissions');
+const { randomUUID } = require('node:crypto');
+const { deliverBuild } = require('../services/buildDelivery');
+const { createBuildJob, updateBuildJob } = require('../services/buildJobService');
+const activeGuilds = require('../services/guildBuildLock');
+const { isOwner } = require('../utils/permissions');
 const logger = require('../utils/logger');
-const { executeDryRun, executeLiveRunFromPlan } = require('../services/discordTemplateRunner');
-const {
-  createLiveDiscordExecutionAdapter,
-  validateLiveExecutionPreflight,
-} = require('../services/executionAdapters/discordLiveExecutionAdapter');
-const {
-  countDiagnostics,
-  formatFailureMessage,
-  inferTemplateStatus,
-  summarizeDiagnostics,
-  uniqueDiagnostics,
-} = require('../utils/templateDiagnostics');
+const { executeDryRun } = require('../services/discordTemplateRunner');
+const { formatFailureMessage } = require('../utils/templateDiagnostics');
 
 const requiredPermissions = [
   PermissionsBitField.Flags.ManageRoles,
@@ -35,56 +28,6 @@ const formatMissingPermissions = (memberPermissions) => requiredPermissions
   .filter((permission) => !memberPermissions.has(permission))
   .map((permission) => PermissionsBitField.Flags[Object.keys(PermissionsBitField.Flags).find((key) => PermissionsBitField.Flags[key] === permission)] || String(permission));
 
-const createTemplateCreateEmbed = (slug, result, diagnostics = {}) => {
-  const warnings = uniqueDiagnostics([
-    ...(diagnostics.normalizationWarnings || []),
-    ...(diagnostics.repairWarnings || []),
-    ...(diagnostics.validationWarnings || []),
-    ...(result.plan?.warnings || []),
-    ...(result.liveRun?.warnings || []),
-  ]);
-
-  return new EmbedBuilder()
-    .setColor(config.branding.color)
-    .setTitle('TEMPLATE CREATE RESULT')
-    .setDescription(`Live template creation finished for \`${slug}\`.`)
-    .addFields(
-      { name: 'Template', value: result.template.name, inline: false },
-      {
-        name: 'Status',
-        value: inferTemplateStatus(diagnostics, {
-          blocked: result.liveRun.finalStatus !== 'success',
-          failed: result.liveRun.summary.failedCount > 0,
-        }),
-        inline: true,
-      },
-      { name: 'Run Result', value: result.liveRun.finalStatus, inline: true },
-      { name: 'Warnings', value: String(countDiagnostics(warnings)), inline: true },
-      {
-        name: 'Run Summary',
-        value: [
-          `Created: ${result.liveRun.summary.successCount}`,
-          `Blocked: ${result.liveRun.summary.blockedCount}`,
-          `Failed: ${result.liveRun.summary.failedCount}`,
-        ].join('\n'),
-        inline: false,
-      },
-      {
-        name: 'Top Diagnostics',
-        value: summarizeDiagnostics(warnings, {
-          fallback: 'None detected.',
-          limit: 4,
-        }),
-        inline: false,
-      },
-      {
-        name: 'Debug File',
-        value: result.debugFilePath || 'Not written (production mode).',
-        inline: false,
-      },
-    );
-};
-
 module.exports = {
   data: new SlashCommandBuilder()
     .setName('template-create')
@@ -98,7 +41,7 @@ module.exports = {
       .setDescription('Must be true to allow live creation.')
       .setRequired(true)),
   async execute(interaction) {
-    if (!isStaffMember(interaction.member)) {
+    if (!interaction.guildId || !isOwner(interaction.user.id)) {
       await interaction.reply({
         content: 'You do not have permission to use this command.',
         flags: MessageFlags.Ephemeral,
@@ -125,9 +68,11 @@ module.exports = {
       return;
     }
 
-    await interaction.deferReply({
-      flags: MessageFlags.Ephemeral,
-    });
+    if (activeGuilds.has(interaction.guildId)) { await interaction.reply({ content: 'Un build est déjà actif sur ce serveur.', flags: MessageFlags.Ephemeral }); return; }
+    activeGuilds.add(interaction.guildId);
+    const runId = `template-${randomUUID()}`;
+    try { await interaction.deferReply({ flags: MessageFlags.Ephemeral }); }
+    catch (error) { activeGuilds.delete(interaction.guildId); throw error; }
 
     try {
       const botMember = interaction.guild?.members?.me || await interaction.guild?.members.fetchMe();
@@ -172,53 +117,18 @@ module.exports = {
         return;
       }
 
-      const livePreflight = await validateLiveExecutionPreflight(interaction.guild, dryRunResult);
-
-      if (!livePreflight.ok) {
-        logger.warn('Template create live preflight blocked', {
-          template: templateSlug,
-          errors: livePreflight.errors.length,
-        });
-
-        await interaction.editReply({
-          content: formatFailureMessage('Live creation was blocked by the final preflight.', {
-            errors: livePreflight.errors,
-            warnings: livePreflight.warnings,
-          }),
-        });
-        return;
-      }
-
-      const liveAdapter = createLiveDiscordExecutionAdapter(interaction.guild);
-      const liveRunResult = await executeLiveRunFromPlan(dryRunResult, liveAdapter);
-
-      if (!liveRunResult.ok) {
-        logger.warn('Template live run failed', {
-          template: templateSlug,
-          code: liveRunResult.code,
-        });
-
-        await interaction.editReply({
-          content: formatFailureMessage('The template could not be executed live.', {
-            errors: liveRunResult.errors,
-            warnings: liveRunResult.warnings,
-          }),
-        });
-        return;
-      }
-
-      await interaction.editReply({
-        embeds: [createTemplateCreateEmbed(templateSlug, liveRunResult, liveRunResult.templateDiagnostics || {})],
-      });
+      createBuildJob({ runId, guildId: interaction.guildId, userId: interaction.user.id, status: 'running', templateSlug });
+      const record = await deliverBuild(interaction.guild, { dryRunResult }, runId);
+      updateBuildJob(runId, { status: 'completed', currentAgent: null });
+      await interaction.editReply({ content: `Création vérifiée. Run : ${runId}. Ressources : ${record.resources.length}.` });
     } catch (error) {
       logger.error('Template create command failed', {
         template: templateSlug,
         error: error.message,
       });
 
-      await interaction.editReply({
-        content: 'The live template creation failed unexpectedly.',
-      });
-    }
+      try { updateBuildJob(runId, { status: 'failed', mainError: error.message }); } catch {}
+      await interaction.editReply({ content: logger.redact(error.message).slice(0, 1800) });
+    } finally { activeGuilds.delete(interaction.guildId); }
   },
 };

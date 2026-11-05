@@ -1,6 +1,8 @@
 const fs = require('node:fs');
 const path = require('node:path');
 const config = require('../config');
+const { getProvider } = require('./aiProvider');
+const { referenceContext } = require('./referenceRetriever');
 const logger = require('../utils/logger');
 const discordTemplateSystemPrompt = require('../prompts/discordTemplateSystemPrompt');
 const { loadAiSkillsBlock } = require('./aiSkillLoader');
@@ -170,6 +172,8 @@ const buildLmStudioRequest = ({
     });
   }
 
+  const referenceData = referenceContext(preparedBriefText || normalizedPrompt);
+  if (referenceData) messages.push({ role: 'user', content: referenceData });
   messages.push({
     role: 'user',
     content: userContent.join('\n\n'),
@@ -177,10 +181,10 @@ const buildLmStudioRequest = ({
 
   const request = {
     target: {
-      provider: 'lm-studio',
-      baseUrl: config.lmStudioBaseUrl,
+      provider: getProvider()?.name || 'not-configured',
+      baseUrl: getProvider()?.baseUrl || config.lmStudioBaseUrl,
       endpoint: '/v1/chat/completions',
-      model: config.lmStudioModel || null,
+      model: getProvider()?.model || config.lmStudioModel || null,
     },
     requestedBy: {
       userId: requestedBy?.id || null,
@@ -192,7 +196,7 @@ const buildLmStudioRequest = ({
       normalizedBrief,
     },
     requestPayload: {
-      model: config.lmStudioModel || 'MODEL_NOT_CONFIGURED',
+      model: getProvider()?.model || config.lmStudioModel || 'MODEL_NOT_CONFIGURED',
       messages,
       temperature: 0.2,
     },
@@ -212,7 +216,7 @@ const buildLmStudioRequest = ({
   logger.info('LM Studio build request prepared', {
     hasPrompt: Boolean(normalizedPrompt),
     hasAttachment: Boolean(normalizedAttachment),
-    modelConfigured: Boolean(config.lmStudioModel),
+    modelConfigured: Boolean(getProvider()?.model || config.lmStudioModel),
     debugFile: Boolean(debugFilePath),
     skillsLoaded: skillsBlock.skillFiles.length,
     skillsChars: skillsBlock.chars,

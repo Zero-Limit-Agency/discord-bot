@@ -31,7 +31,14 @@ const loadEvents = (client) => {
 
   for (const file of eventFiles) {
     const event = require(path.join(eventsPath, file));
-    const handler = (...args) => event.execute(...args, client);
+    const handler = (...args) => {
+      const allowedGuilds = (process.env.ALLOWED_GUILD_IDS || '').split(',').filter(Boolean);
+      const guildId = args[0]?.guildId || args[0]?.guild?.id;
+      if (allowedGuilds.length && guildId && !allowedGuilds.includes(guildId)) return;
+      Promise.resolve().then(() => event.execute(...args, client)).catch((error) => {
+        logger.error('Event failed', { event: event.name, guildId, code: error.code || error.name, error: error.message });
+      });
+    };
 
     if (event.once) {
       client.once(event.name, handler);
@@ -46,6 +53,8 @@ const loadEvents = (client) => {
 
 const start = async () => {
   validateStartupConfig();
+  require('./services/networkProxy').configureNetworkProxy();
+  require('./services/runtimeLock').acquireRuntimeLock();
 
   const interruptedJobs = reconcileInterruptedBuildJobs();
 
@@ -60,6 +69,9 @@ const start = async () => {
     intents: [
       GatewayIntentBits.Guilds,
       GatewayIntentBits.GuildMembers,
+      GatewayIntentBits.GuildVoiceStates,
+      GatewayIntentBits.GuildMessages,
+      ...(process.env.MESSAGE_CONTENT_ENABLED === 'true' ? [GatewayIntentBits.MessageContent] : []),
     ],
   });
 
@@ -72,12 +84,20 @@ const start = async () => {
 
   process.on('uncaughtException', (error) => {
     logger.error('Uncaught exception', { error: error.message });
+    process.exit(1);
   });
 
-  await client.login(config.discordToken);
+  client.on('shardError', (error) => logger.error('Discord gateway error', { code: error.code || error.name }));
+  const shutdown = async () => { await client.destroy(); process.exit(0); };
+  process.once('SIGTERM', shutdown); process.once('SIGINT', shutdown);
+  const startupTimer = setTimeout(() => { logger.error('Discord gateway did not become ready within 60 seconds'); client.destroy(); process.exitCode = 1; }, 60000);
+  startupTimer.unref();
+  client.once('clientReady', () => clearTimeout(startupTimer));
+  try { await client.login(config.discordToken); } catch (error) { clearTimeout(startupTimer); throw error; }
 };
 
-start().catch((error) => {
+module.exports = { start, loadCommands, loadEvents, validateStartupConfig };
+if (require.main === module) start().catch((error) => {
   logger.error('Bot failed to start', { error: error.message });
   process.exitCode = 1;
 });

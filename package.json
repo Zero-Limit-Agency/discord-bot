@@ -4,9 +4,9 @@
   "description": "Zero Limit Agency Discord bot",
   "main": "src/index.js",
   "scripts": {
-    "start": "node src/index.js",
-    "dev": "node --watch src/index.js",
-    "register-commands": "node src/registerCommands.js",
+    "start": "node --use-env-proxy src/index.js",
+    "dev": "node --use-env-proxy --watch src/index.js",
+    "register-commands": "node --use-env-proxy src/registerCommands.js",
     "verify-template-fixtures": "node scripts/verifyTemplateFixtures.js",
     "verify-template-execution": "node scripts/verifyTemplateExecution.js",
     "verify-build-briefs": "node scripts/verifyBuildBriefs.js",
@@ -14,7 +14,9 @@
     "verify-build-resilience": "node scripts/verifyBuildResilience.js",
     "verify-build-embed-budget": "node scripts/verifyBuildEmbedBudget.js",
     "verify-build-quality": "node scripts/verifyBuildQuality.js",
-    "verify-safe": "node --check src/index.js && node --check src/commands/build.js && node --check src/commands/templateCreate.js && node --check src/services/buildAgents/buildAgentPipeline.js && node --check src/services/discordPayloadBuilder.js && node --check src/services/discordTemplateRunner.js && npm run verify-build-resilience && npm run verify-build-embed-budget && npm run verify-build-quality && npm run verify-build-briefs && npm run verify-template-fixtures && npm run verify-template-execution"
+    "verify-safe": "node --check src/index.js && node --check src/commands/build.js && node --check src/commands/templateCreate.js && node --check src/services/buildAgents/buildAgentPipeline.js && node --check src/services/discordPayloadBuilder.js && node --check src/services/discordTemplateRunner.js && npm run verify-build-resilience && npm run verify-build-embed-budget && npm run verify-build-quality && npm run verify-build-briefs && npm run verify-template-fixtures && npm run verify-template-execution && npm run verify-commercial",
+    "verify-commercial": "node --test scripts/commercial.test.js",
+    "verify-discord-live": "node --use-env-proxy scripts/verifyDiscordLive.js"
   },
   "keywords": [
     "discord",
@@ -24,8 +26,12 @@
   "author": "Zero Limit Agency",
   "license": "MIT",
   "dependencies": {
-    "discord.js": "^14.19.3",
+    "discord.js": "^14.28.1",
     "dotenv": "^16.5.0",
+    "https-proxy-agent": "^7.0.6",
     "rss-parser": "^3.13.0"
+  },
+  "engines": {
+    "node": ">=24.5.0"
   }
 }

@@ -1,0 +1,9 @@
+[
+  {"id":"esport","tags":["esport","scrims","roster","tournoi"],"guidance":"Separate community, roster operations, private staff, tryouts and support. Keep team voice private to the roster; official results read-only."},
+  {"id":"creator","tags":["creator","createur","streamer","youtube","twitch"],"guidance":"Provide announcements, audience discussion, content suggestions, collaborations and private moderation. Avoid excessive fan channels."},
+  {"id":"premium","tags":["premium","vip","paid","prive"],"guidance":"Keep a small public onboarding area, a clear premium member zone, private staff and a private support workflow. Paid access never comes from public self-role menus."},
+  {"id":"gaming","tags":["gaming","game","jeux","joueurs"],"guidance":"Group players by the games actually named in the brief. Include concise matchmaking and voice spaces; avoid a category per keyword."},
+  {"id":"community","tags":["community","communaute","association"],"guidance":"Use short onboarding, rules, introductions, public discussion and moderation/support. Make private areas explicit and permissions auditable."},
+  {"id":"corporate","tags":["corporate","entreprise","business","agency","agence"],"guidance":"Separate public information, client support, internal work and staff. Keep confidential client conversations private and never reuse one client's text for another."},
+  {"id":"academy","tags":["academy","academie","formation","cours","education"],"guidance":"Organize announcements, course resources, questions, cohort discussion and training voice. Restrict instructor and staff areas; follow the actual course list in the brief."}
+]

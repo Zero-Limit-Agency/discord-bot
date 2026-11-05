@@ -1,4 +1,4 @@
-const { ChannelType, OverwriteType, PermissionsBitField } = require('discord.js');
+const { ChannelType, OverwriteType, PermissionFlagsBits: P, PermissionsBitField } = require('discord.js');
 
 const asBigInt = (value) => {
   const parsed = BigInt(value || '0');
@@ -91,6 +91,15 @@ const validateLiveExecutionPreflight = async (guild, executionPlanResult) => {
     }
   });
 
+  const roleSteps = steps.filter((step) => step.action === 'create_role');
+  const channelSteps = steps.filter((step) => ['create_channel', 'create_category'].includes(step.action));
+  if (guild.roles.cache.size + roleSteps.length > 250) errors.push('Discord role limit would be exceeded.');
+  if (guild.channels.cache.size + channelSteps.length > 500) errors.push('Discord channel limit would be exceeded.');
+  if (steps.some((step) => step.action === 'create_channel' && [5, 15].includes(step.payload.type)) && guild.features && !guild.features.includes('COMMUNITY')) errors.push('Forums and announcements require a Community server. Enable Community in Discord first.');
+  for (const category of steps.filter((step) => step.action === 'create_category')) {
+    if (steps.filter((step) => step.action === 'create_channel' && step.payload.parent === category.templateRef).length > 50) errors.push('A category cannot contain more than 50 channels.');
+  }
+
   if (!steps.length) {
     errors.push('The execution plan contains no actions.');
   }
@@ -162,6 +171,10 @@ const createLiveDiscordExecutionAdapter = (guild) => ({
         name: payload.name,
         type: ChannelType.GuildCategory,
         position: payload.position,
+        permissionOverwrites: [
+          { id: guild.id, deny: [P.ViewChannel] },
+          { id: guild.members.me.id, allow: [P.ViewChannel, P.ManageChannels, P.SendMessages, P.EmbedLinks] },
+        ],
         reason: `Template creation: category ${templateRef}`,
       });
 
@@ -179,12 +192,20 @@ const createLiveDiscordExecutionAdapter = (guild) => ({
     }
   },
 
-  async createChannel({ templateRef, payload, resolvedParentId }) {
+  async createChannel({ templateRef, payload, resolvedParentId, resolvedRoleRefs = {} }) {
     try {
+      const overwrites = (payload.permissionOverwrites || []).map((ow) => ({
+        id: ow.roleRef === '@everyone' ? guild.id : resolvedRoleRefs[`FUTURE_ROLE_${ow.roleRef}`],
+        allow: asBigInt(ow.allow), deny: asBigInt(ow.deny), type: OverwriteType.Role,
+      }));
+      if (overwrites.some((ow) => !ow.id)) throw new Error('Unresolved permission role.');
+      if (!overwrites.some((ow) => ow.id === guild.id)) overwrites.push({ id: guild.id, allow: P.ViewChannel, deny: 0n, type: OverwriteType.Role });
+      overwrites.push({ id: guild.members.me.id, allow: P.ViewChannel | P.ManageChannels | P.SendMessages | P.EmbedLinks, deny: 0n, type: OverwriteType.Member });
       const createdChannel = await guild.channels.create({
         name: payload.name,
         type: payload.type,
         topic: payload.topic,
+        permissionOverwrites: overwrites,
         parent: resolvedParentId || undefined,
         reason: `Template creation: channel ${templateRef}`,
       });
@@ -270,8 +291,11 @@ const createLiveDiscordExecutionAdapter = (guild) => ({
 
       const sentMessage = await channel.send({
         embeds: [payload],
+        allowedMentions: { parse: [] },
       });
 
+      const verified = await sentMessage.fetch();
+      if (!verified.embeds?.length) throw new Error('Onboarding embed verification failed.');
       return {
         ok: true,
         action: 'postOnboardingEmbed',

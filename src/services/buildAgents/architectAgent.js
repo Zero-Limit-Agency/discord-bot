@@ -1,5 +1,7 @@
 const { createAgentBrief } = require('../buildBriefNormalizer');
 
+const { referenceContext } = require('../referenceRetriever');
+
 const BASE_SYSTEM_LINES = [
   'You are the Architect Agent for Discord server generation.',
   'Return exactly one valid JSON object.',
@@ -29,6 +31,8 @@ const buildArchitectAgentRequest = ({
   preparedBriefText = null,
 }) => {
   const userSections = [];
+  const referenceData = referenceContext(preparedBriefText || prompt);
+  if (referenceData) userSections.push(referenceData);
 
   if (preparedBriefText) {
     userSections.push(`User brief:\n${preparedBriefText}`);

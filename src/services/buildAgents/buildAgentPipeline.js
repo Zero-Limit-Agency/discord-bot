@@ -813,7 +813,7 @@ const runBuildAgentPipeline = async ({
       maxCharacters: Math.min(config.aiSkillsMaxChars, 2000),
     });
     const skillsMeta = buildSkillsMeta(skillsBlock);
-    const model = config.lmStudioModel || 'MODEL_NOT_CONFIGURED';
+    const model = require('../aiProvider').getProvider()?.model || config.lmStudioModel || 'MODEL_NOT_CONFIGURED';
     const maxRetries = typeof config.getRuntimeTimeoutConfig === 'function'
       ? config.getRuntimeTimeoutConfig().buildAgentMaxRetries
       : config.buildAgentMaxRetries;
