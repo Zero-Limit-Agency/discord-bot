@@ -11,7 +11,7 @@ Date : 5 novembre 2026 (Europe/Paris). Version package : 1.0.0. Statut commercia
 - Le bot a réellement atteint `clientReady` sur Discord, avec `ALLOWED_GUILD_IDS=1519795418429390908`. Ce processus de validation a été arrêté ; aucun déploiement permanent n'a été effectué.
 - Les 17 commandes ont été ajoutées/mises à jour puis relues via l'API sur **Test seulement**. Aucune commande globale n'a été déployée. Les publications historiques de textes de l'agence et les outils template sont désormais owner-only ; `/announce` est admin + licence embeds.
 
-`/build` est maintenant relié à la création réelle, au journal de ressources, à la relecture Discord et au rapport final. Un build complet sur adaptateur simulé passe. **Aucun build IA réel n'a été lancé** : aucun owner/provider n'est configuré dans ce runtime, et la position strictement protégée du rôle `all` empêche l'insertion de nouveaux rôles sur Test.
+`/build` est maintenant relié à la création réelle, au journal de ressources, à la relecture Discord et au rapport final. Un build complet sur adaptateur simulé passe. **Aucun build IA réel n'a été lancé** : aucun provider n'est configuré dans ce runtime, et la position strictement protégée du rôle `all` empêche l'insertion de nouveaux rôles sur Test.
 
 ## B. Constats et corrections — passe unique
 
@@ -63,6 +63,8 @@ Le planner sépare `staticServer` des `botFeatures`. Il configure welcome/goodby
 | NVIDIA NIM | Sélection, modèle, Authorization et réponses/erreurs testés sur fetch simulé. Aucune clé NVIDIA disponible ; aucun appel réel, crédit ou benchmark |
 | LM Studio | Transport compatible et streaming testés, intégration au pipeline existant conservée. Service/modèle non configurés dans ce cloud ; aucun appel réel |
 | Ollama | Endpoint compatible OpenAI et sélection du modèle testés sur fetch simulé. Service/modèle non configurés ; aucun appel réel |
+
+Owner : identifiant fourni après la livraison initiale, configuré dans le `.env` local ignoré par Git ; contrôle positif de cet ID et refus d’un autre ID vérifiés. Cette configuration locale ne modifie pas un déploiement externe.
 
 Provider utilisé en live : **aucun**. Les timeouts, HTTP 503, erreur réseau, réponse vide/malformée et taille excessive sont simulés. Un modèle mal configuré ne déclenche aucune mutation Discord. Aucun modèle téléchargé.
 
@@ -119,7 +121,7 @@ Documentation et exemple d'environnement livrés séparément. La branche de fin
 
 **NOT READY**. Blocages réels avant validation commerciale :
 
-1. Fournir/configurer `ZERO_LIMIT_OWNER_IDS` et un endpoint/modèle IA accessible et autorisé. Aucun provider gratuit local n'est configuré dans le cloud ; aucune API payante n'a été appelée. Effectuer ensuite un seul build IA complet.
+1. Configurer un endpoint/modèle IA accessible et autorisé. `ZERO_LIMIT_OWNER_IDS` est maintenant renseigné localement avec l’identifiant fourni par le propriétaire ; le reporter dans la configuration du futur déploiement. Aucun provider gratuit local n'est configuré dans le cloud ; aucune API payante n'a été appelée. Effectuer ensuite un seul build IA complet.
 2. Résoudre la contrainte de recette sur Test : `all` est en position 1 ; créer de nouveaux rôles décalerait cette position. Conserver ce refus de sécurité. Il faut soit un autre serveur de recette explicitement autorisé sans cette contrainte, soit une décision du propriétaire modifiant l'exigence sur la position absolue. Aucune modification du rôle protégé n'est autorisée par cette livraison.
 3. Réaliser la recette humaine restante : clics/formulaires, join/leave, accès membre/staff, menus de rôles, entrée en vocal/transfert/nettoyage et redémarrage réel. Corriger tout défaut observé avant de déclarer READY. Les fonctions et leurs tests de service existent ; les événements humains ne peuvent pas être prouvés par ce smoke API.
 
