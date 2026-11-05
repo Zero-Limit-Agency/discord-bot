@@ -1,6 +1,7 @@
 const path = require('node:path');
 const config = require('../config');
 const logger = require('../utils/logger');
+const { readBoundedText } = require('../utils/boundedResponse');
 
 const supportedExtensions = new Set(['.txt', '.md', '.json']);
 
@@ -33,12 +34,16 @@ const readAttachmentText = async (attachment) => {
     };
   }
 
+  let url;
+  try { url = new URL(attachment.url); } catch { return { ok: false, code: 'UNSAFE_ATTACHMENT_URL' }; }
+  if (url.protocol !== 'https:' || !['cdn.discordapp.com', 'media.discordapp.net'].includes(url.hostname) || url.username || url.password) return { ok: false, code: 'UNSAFE_ATTACHMENT_URL' };
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), config.attachmentFetchTimeoutMs);
 
   try {
     const response = await fetch(attachment.url, {
       signal: controller.signal,
+      redirect: 'error',
       headers: {
         accept: 'text/plain, application/json, text/markdown;q=0.9, */*;q=0.1',
       },
@@ -52,7 +57,7 @@ const readAttachmentText = async (attachment) => {
       };
     }
 
-    const text = await response.text();
+    const text = await readBoundedText(response, config.attachmentTextMaxBytes);
     const actualSize = Buffer.byteLength(text, 'utf8');
 
     if (actualSize > config.attachmentTextMaxBytes) {

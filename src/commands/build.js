@@ -4,8 +4,12 @@ const {
   SlashCommandBuilder,
 } = require('discord.js');
 const { randomUUID } = require('node:crypto');
+const { getProvider } = require('../services/aiProvider');
+const { planFeatures } = require('../services/featuresPlanner');
+const { deliverBuild } = require('../services/buildDelivery');
+const activeGuilds = require('../services/guildBuildLock');
 const config = require('../config');
-const { isStaffMember } = require('../utils/permissions');
+const { isOwner } = require('../utils/permissions');
 const logger = require('../utils/logger');
 const { buildLmStudioRequest } = require('../services/lmStudioRequestBuilder');
 const { readAttachmentText } = require('../services/attachmentTextReader');
@@ -1179,7 +1183,7 @@ const buildPostGenerationReport = async (slug) => {
 module.exports = {
   data: new SlashCommandBuilder()
     .setName('build')
-    .setDescription('Prepare a local LM Studio build request from a prompt and optional file.')
+    .setDescription('Construire un serveur Discord personnalisé (propriétaires Zero Limit).')
     .addStringOption((option) => option
       .setName('prompt')
       .setDescription('Build prompt for the future LM Studio generation.')
@@ -1189,7 +1193,7 @@ module.exports = {
       .setDescription('Optional file used as source material.')
       .setRequired(false)),
   async execute(interaction) {
-    if (!isStaffMember(interaction.member)) {
+    if (!interaction.guildId || !isOwner(interaction.user.id)) {
       await interaction.reply({
         content: 'You do not have permission to use this command.',
         flags: MessageFlags.Ephemeral,
@@ -1197,9 +1201,15 @@ module.exports = {
       return;
     }
 
-    await interaction.deferReply({
+    if (activeGuilds.has(interaction.guildId)) {
+      await interaction.reply({ content: 'Un build est déjà actif sur ce serveur.', flags: MessageFlags.Ephemeral }); return;
+    }
+    activeGuilds.add(interaction.guildId);
+    try { await interaction.deferReply({
       flags: MessageFlags.Ephemeral,
     });
+
+    } catch (error) { activeGuilds.delete(interaction.guildId); throw error; }
 
     const buildRunId = createBuildRunId();
     let buildJobCreated = false;
@@ -1215,7 +1225,8 @@ module.exports = {
           lmStudioTimeoutMs: config.lmStudioTimeoutMs,
           buildAgentMaxRetries: config.buildAgentMaxRetries,
         };
-      const lmStudioEnabled = config.lmStudioEnabled;
+      const lmStudioEnabled = Boolean(getProvider());
+
       const buildPipelineMode = runtimeTimeouts.buildPipelineMode || config.buildPipelineMode;
       const prompt = interaction.options.getString('prompt');
       const file = interaction.options.getAttachment('file');
@@ -1235,6 +1246,7 @@ module.exports = {
       });
       await progressReporter.update('queued');
       progressReporter.start();
+      if (!lmStudioEnabled) throw new Error('Aucun provider IA configuré. Configurez AI_PROVIDER et son modèle.');
 
       if (file) {
         const attachmentResult = await readAttachmentText(file);
@@ -1467,6 +1479,11 @@ module.exports = {
         }
       }
 
+      if (!generatedTemplate?.valid || !generatedTemplate?.saved || !buildReport?.ok) {
+        throw new Error(lmStudio.errorMessage || 'Template invalide ou analyse post-build échouée.');
+      }
+      const deliveryResult = await deliverBuild(interaction.guild, buildReport, buildRunId, planFeatures(briefNormalizationResult.agentSourceText, generatedTemplate.draft));
+
       let embeds;
 
       try {
@@ -1581,7 +1598,8 @@ module.exports = {
 
       try {
         const delivery = await progressReporter.sendFinal({
-          embeds: normalizedEmbeds.slice(0, 5),
+          content: `Serveur créé et vérifié. Run : ${buildRunId}. Ressources : ${deliveryResult.resources.length}.`,
+          embeds: [new EmbedBuilder().setColor(config.branding.color).setTitle(generatedTemplate.name).setDescription('Structure native livrée. Elle reste en place si le bot est retiré.').addFields({ name: 'Fonctionnalités dynamiques', value: Object.entries(deliveryResult.botFeatures).map(([feature, proposal]) => `${feature}: ${proposal.status}`).join('\n').slice(0, 1024) || 'Aucune demandée.', inline: false }, { name: 'Administration', value: '/panel — licence et permissions administrateur requises.' })],
         }, [
           'BUILD COMPLETED',
           `Run: ${buildRunId}`,
@@ -1604,9 +1622,9 @@ module.exports = {
         });
 
         await progressReporter.sendFinal({
-          content: `BUILD CRASH\n${safeString(replyError.message, 'Unknown Discord response error.')}`,
+          content: `BUILD FAILED\n${safeString(replyError.message, 'Unknown Discord response error.')}`,
           embeds: [],
-        }, `BUILD CRASH\nRun: ${buildRunId}\n${safeString(replyError.message, 'Unknown Discord response error.')}`);
+        }, `BUILD FAILED\nRun: ${buildRunId}\n${safeString(replyError.message, 'Unknown Discord response error.')}`);
       }
     } catch (error) {
       const fatalError = summarizeFatalError(error);
@@ -1621,7 +1639,7 @@ module.exports = {
         debugFilePath: crashDebugFilePath,
       });
 
-      const crashMessage = `BUILD CRASH\n${fatalError.message}`;
+      const crashMessage = `BUILD FAILED\n${fatalError.message}`;
 
       if (buildJobCreated) {
         try {
@@ -1661,11 +1679,13 @@ module.exports = {
       }
     } finally {
       progressReporter?.stop();
+      activeGuilds.delete(interaction.guildId);
     }
   },
 };
 
 module.exports._test = {
+  processTemplateCandidate,
   countEmbedsCharacters,
   normalizeEmbedsForDiscord,
   resolveBuildDebugFolder,

@@ -28,7 +28,7 @@ const getRuntimeTimeoutConfig = () => {
     buildPermissionsTimeoutMs: parsePositiveInt(process.env.BUILD_PERMISSIONS_TIMEOUT_MS, buildAgentTimeoutMs),
     buildContentTimeoutMs: parsePositiveInt(process.env.BUILD_CONTENT_TIMEOUT_MS, buildAgentTimeoutMs),
     buildAssemblerTimeoutMs: parsePositiveInt(process.env.BUILD_ASSEMBLER_TIMEOUT_MS, buildAgentTimeoutMs),
-    buildAgentMaxRetries: Math.max(0, Number.parseInt(process.env.BUILD_AGENT_MAX_RETRIES || '1', 10) || 1),
+    buildAgentMaxRetries: Math.min(3, Math.max(0, Number.parseInt(process.env.BUILD_AGENT_MAX_RETRIES ?? '1', 10) || 0)),
     lmStudioTimeoutMs,
   };
 };

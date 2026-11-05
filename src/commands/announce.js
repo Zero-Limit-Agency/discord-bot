@@ -5,7 +5,7 @@ const {
 } = require('discord.js');
 const config = require('../config');
 const logger = require('../utils/logger');
-const { isStaffMember } = require('../utils/permissions');
+const { requireAdmin, requireFeature } = require('../services/managed/access');
 
 const DEFAULT_ANNOUNCE_COLOR = config.branding.color || 0x7a1632;
 const ANNOUNCE_PERMISSION_ERROR = 'You do not have permission to use this command.';
@@ -57,18 +57,18 @@ const canSendEmbedToChannel = (channel, botMember, mention) => {
 
 module.exports = {
   data: new SlashCommandBuilder()
-    .setName('announce')
+    .setName('announce').setDMPermission(false).setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
     .setDescription('Send a staff announcement embed to a selected channel.')
     .addChannelOption((option) => option
       .setName('channel')
       .setDescription('The channel where the announcement will be posted.')
       .setRequired(true))
     .addStringOption((option) => option
-      .setName('title')
+      .setName('title').setMaxLength(256)
       .setDescription('The announcement title.')
       .setRequired(true))
     .addStringOption((option) => option
-      .setName('message')
+      .setName('message').setMaxLength(4096)
       .setDescription('The announcement content.')
       .setRequired(true))
     .addStringOption((option) => option
@@ -89,13 +89,8 @@ module.exports = {
         { name: '@here', value: 'here' },
       )),
   async execute(interaction) {
-    if (!isStaffMember(interaction.member)) {
-      await interaction.reply({
-        content: ANNOUNCE_PERMISSION_ERROR,
-        ephemeral: true,
-      });
-      return;
-    }
+    await requireAdmin(interaction);
+    requireFeature(interaction.guildId, 'embeds');
 
     const channel = interaction.options.getChannel('channel', true);
     const title = interaction.options.getString('title', true).trim();
@@ -104,7 +99,9 @@ module.exports = {
     const mention = interaction.options.getString('mention') || 'none';
     const colorInput = interaction.options.getString('color');
     const color = parseEmbedColor(colorInput);
-    const botMember = interaction.guild.members.me;
+    const botMember = interaction.guild.members.me || await interaction.guild.members.fetchMe();
+    if (channel.guildId !== interaction.guildId) throw new Error('Salon hors serveur.');
+    if (image) { const url = new URL(image); if (url.protocol !== 'https:' || url.username || url.password) throw new Error('Image URL HTTPS requise.'); }
 
     if (color === null) {
       await interaction.reply({
@@ -135,14 +132,17 @@ module.exports = {
 
     const content = mention === 'none' ? undefined : `@${mention}`;
 
+    await interaction.deferReply({ ephemeral: true });
     try {
-      await channel.send({
+      requireFeature(interaction.guildId, 'embeds');
+      const sent = await channel.send({
         content,
         embeds: [embed],
         allowedMentions: mention === 'none' ? { parse: [] } : { parse: ['everyone'] },
       });
 
-      await interaction.reply({
+      await sent.fetch();
+      await interaction.editReply({
         content: 'Announcement sent.',
         ephemeral: true,
       });
@@ -159,7 +159,7 @@ module.exports = {
         error: error.message,
       });
 
-      await interaction.reply({
+      await interaction.editReply({
         content: 'I could not send the announcement in that channel.',
         ephemeral: true,
       });

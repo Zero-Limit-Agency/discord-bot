@@ -11,7 +11,7 @@ const existingTemplateDirectories = [
 ];
 
 const ensureDraftDirectory = () => {
-  fs.mkdirSync(draftTemplatesDirectoryPath, { recursive: true });
+  fs.mkdirSync(draftTemplatesDirectoryPath, { recursive: true, mode: 0o700 });
 };
 
 const slugifyTemplateName = (value) => {
@@ -67,7 +67,7 @@ const saveDraftTemplate = (template) => {
     };
   }
 
-  fs.writeFileSync(filePath, `${JSON.stringify(template, null, 2)}\n`, 'utf8');
+  fs.writeFileSync(filePath, `${JSON.stringify(template, null, 2)}\n`, { encoding: 'utf8', flag: 'wx', mode: 0o600 });
 
   return {
     ok: true,

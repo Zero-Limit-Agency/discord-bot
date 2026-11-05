@@ -19,4 +19,6 @@ const isStaffMember = (member) => {
 
 module.exports = {
   isStaffMember,
+  isOwner: (userId) => Boolean(userId) && (process.env.ZERO_LIMIT_OWNER_IDS || '')
+    .split(',').map((id) => id.trim()).filter((id) => /^\d{17,20}$/.test(id)).includes(userId),
 };

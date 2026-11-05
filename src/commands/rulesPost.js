@@ -4,7 +4,7 @@ const {
 } = require('discord.js');
 const createRulesEmbeds = require('../embeds/rulesEmbed');
 const logger = require('../utils/logger');
-const { isStaffMember } = require('../utils/permissions');
+const { isOwner } = require('../utils/permissions');
 
 const RULES_PERMISSION_ERROR = 'You do not have permission to use this command.';
 const RULES_CHANNEL_ERROR = 'I cannot send embeds in that channel.';
@@ -50,7 +50,7 @@ module.exports = {
       .setDescription('The channel where the rules will be posted.')
       .setRequired(true)),
   async execute(interaction) {
-    if (!isStaffMember(interaction.member)) {
+    if (!interaction.guildId || !isOwner(interaction.user.id)) {
       await interaction.reply({
         content: RULES_PERMISSION_ERROR,
         ephemeral: true,

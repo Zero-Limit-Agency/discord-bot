@@ -63,6 +63,7 @@ const executeStepWithAdapter = async (step, adapter, runtimeRefs) => {
       return adapter.createChannel({
         templateRef: step.templateRef,
         payload: step.payload,
+        resolvedRoleRefs: runtimeRefs,
         resolvedParentId: step.payload.parent
           ? runtimeRefs[`FUTURE_CATEGORY_${step.payload.parent}`] || null
           : null,
