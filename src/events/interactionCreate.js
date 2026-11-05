@@ -40,16 +40,25 @@ const writeGlobalCommandCrashFile = (interaction, error) => {
     `cause: ${safeString(error?.cause?.message || error?.cause, 'None')}`,
     '',
     '[STACK]',
-    safeString(error?.stack, 'No stack available.'),
+    logger.redact(safeString(error?.stack, 'No stack available.')),
   ].join('\n');
 
-  fs.writeFileSync(filePath, `${content}\n`, 'utf8');
+  fs.writeFileSync(filePath, `${logger.redact(content)}\n`, { encoding: 'utf8', mode: 0o600 });
   return filePath;
 };
 
 module.exports = {
   name: 'interactionCreate',
   async execute(interaction) {
+    if (interaction.customId?.startsWith('zl:')) {
+      try { await require('../services/managed/interactions').handleManaged(interaction); }
+      catch (error) {
+        logger.warn('Managed interaction failed', { guildId: interaction.guildId, code: error.code || 'VALIDATION_FAILED' });
+        const payload = { content: require('../utils/logger').redact(String(error.message)).slice(0, 1800), allowedMentions: { parse: [] } };
+        try { if (interaction.deferred || interaction.replied) await interaction.editReply(payload); else await interaction.reply({ ...payload, flags: MessageFlags.Ephemeral }); } catch { /* Expired interaction cannot be answered. */ }
+      }
+      return;
+    }
     if (!interaction.isChatInputCommand()) {
       return;
     }
@@ -77,12 +86,13 @@ module.exports = {
         cause: safeString(error?.cause?.message || error?.cause, 'None'),
         deferred: interaction.deferred ? 'true' : 'false',
         replied: interaction.replied ? 'true' : 'false',
-        stack: safeString(error?.stack, 'No stack available.'),
+        stack: logger.redact(safeString(error?.stack, 'No stack available.')),
         crashFilePath,
       });
 
       const payload = {
-        content: `BUILD GLOBAL CRASH\n${safeString(error?.message, 'Unknown error.')}`,
+        content: logger.redact(`Action impossible : ${safeString(error?.message, 'Unknown error.')}`).slice(0, 1800),
+        allowedMentions: { parse: [] },
         flags: MessageFlags.Ephemeral,
       };
 
